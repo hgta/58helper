@@ -74,6 +74,42 @@ npm start
 - `data/`: SQLite 数据库文件
 - `config/`: 配置文件目录
 
+## 打包发布
+
+本项目基于 Electron，使用 electron-builder 打包。
+
+### Windows 打包
+
+```bash
+npm run dist:win
+```
+
+产物输出到 `release/` 目录：
+- `58helper Setup 1.0.0.exe` — NSIS 安装包（可选安装目录、创建桌面/开始菜单快捷方式）
+- `58helper 1.0.0.exe` — 绿色便携版（免安装，解压即用）
+
+### macOS 打包
+
+> 注意：macOS 的 `.dmg` / `.zip` 只能在 macOS 上构建（需要 macOS 工具链）。请在 Mac 上执行：
+
+```bash
+# 1. 安装依赖
+npm install
+
+# 2. 打包（生成 dmg 和 zip，支持 x64 + arm64）
+npm run dist:mac
+```
+
+产物输出到 `release/` 目录：
+- `58helper-1.0.0.dmg` — macOS 安装镜像
+- `58helper-1.0.0-mac.zip` — macOS 绿色压缩包
+
+### 打包说明
+
+- `playwright` 已移至 `devDependencies`，打包时不会包含（界面使用 Electron 内置浏览器），大幅减小安装包体积。
+- `sqlite3` 为原生模块，已通过 `asarUnpack` 正确解包，运行时数据（数据库、日志、截图）会自动写入系统用户数据目录，无需管理员权限。
+- 应用图标位于 `electron/assets/icon.png`。
+
 ## 注意事项
 
 - 请确保你的网络环境可以正常访问目标网址。

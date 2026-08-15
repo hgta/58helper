@@ -14,25 +14,99 @@
     "test:unit": "jest --testPathPattern=unit",
     "test:integration": "jest --testPathPattern=integration",
     "build": "npx pkg . --out-path dist",
+    "dist": "electron-builder",
+    "dist:win": "electron-builder --win",
+    "dist:mac": "electron-builder --mac",
     "lint": "eslint src/",
     "format": "prettier --write src/",
     "setup": "npm install && npx playwright install chromium"
   },
   "keywords": [],
-  "author": "",
-  "license": "ISC",
+  "author": "hgta",
+  "license": "MIT",
   "type": "commonjs",
+  "build": {
+    "appId": "com.hgta.58helper",
+    "productName": "58helper",
+    "asar": true,
+    "npmRebuild": false,
+    "buildDependenciesFromSource": false,
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "electron/**/*",
+      "src/**/*",
+      "package.json",
+      "!**/*.map"
+    ],
+    "asarUnpack": [
+      "node_modules/sqlite3/**/*"
+    ],
+    "extraMetadata": {
+      "main": "electron/main.js"
+    },
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "electron/assets/icon.png"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "58helper"
+    },
+    "mac": {
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        }
+      ],
+      "category": "public.app-category.utilities",
+      "icon": "electron/assets/icon.png"
+    },
+    "dmg": {
+      "title": "58helper"
+    }
+  },
   "dependencies": {
     "commander": "^14.0.3",
     "dotenv": "^17.3.1",
     "ejs": "^5.0.1",
     "express": "^5.2.1",
     "js-yaml": "^4.1.1",
-    "playwright": "^1.58.2",
     "sqlite3": "^6.0.1",
     "winston": "^3.19.0"
   },
   "devDependencies": {
-    "electron": "^41.1.0"
+    "app-builder-bin": "^5.0.0-alpha.10",
+    "electron": "^41.1.0",
+    "electron-builder": "25.1.8",
+    "playwright": "^1.58.2"
   }
 }

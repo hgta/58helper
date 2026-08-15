@@ -1,10 +1,11 @@
 const sqlite3 = require('sqlite3').verbose();
 const path = require('path');
 const fs = require('fs');
+const { getDatabasePath } = require('../utils/paths');
 
 class Database {
-    constructor(dbPath = './data/browser_automation.db') {
-        this.dbPath = dbPath;
+    constructor(dbPath = null) {
+        this.dbPath = dbPath || getDatabasePath();
         this.db = null;
     }
 

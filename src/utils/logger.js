@@ -1,12 +1,9 @@
 const winston = require('winston');
 const path = require('path');
-const fs = require('fs');
+const { getLogsDir } = require('./paths');
 
-// 确保日志目录存在
-const logsDir = path.resolve(process.cwd(), 'logs');
-if (!fs.existsSync(logsDir)) {
-    fs.mkdirSync(logsDir, { recursive: true });
-}
+// 确保日志目录存在（Electron 打包后写入用户数据目录）
+const logsDir = getLogsDir();
 
 const logger = winston.createLogger({
     level: process.env.LOG_LEVEL || 'info',

@@ -4,6 +4,7 @@ const { getDatabase } = require('../src/db/database');
 const UrlModel = require('../src/models/UrlModel');
 const AccessHistoryModel = require('../src/models/AccessHistoryModel');
 const logger = require('../src/utils/logger');
+const { getScreenshotsDir } = require('../src/utils/paths');
 const fs = require('fs');
 
 let mainWindow;
@@ -12,12 +13,20 @@ let browserView;
 // 创建应用图标
 function createAppIcon() {
     try {
-        const iconPath = path.join(__dirname, 'assets/icon.svg');
-        if (fs.existsSync(iconPath)) {
-            // Electron 支持 SVG 图标，但某些平台需要 PNG
-            // 创建一个简单的 nativeImage 从 SVG
-            const icon = nativeImage.createFromPath(iconPath);
-            return icon;
+        // 优先使用 PNG 图标（nativeImage 不支持 SVG）
+        const pngPath = path.join(__dirname, 'assets/icon.png');
+        if (fs.existsSync(pngPath)) {
+            const icon = nativeImage.createFromPath(pngPath);
+            if (!icon.isEmpty()) {
+                return icon;
+            }
+        }
+        const svgPath = path.join(__dirname, 'assets/icon.svg');
+        if (fs.existsSync(svgPath)) {
+            const icon = nativeImage.createFromPath(svgPath);
+            if (!icon.isEmpty()) {
+                return icon;
+            }
         }
     } catch (e) {
         console.log('Icon load failed:', e.message);
@@ -174,7 +183,7 @@ function setupIpc() {
         try {
             const image = await browserView.webContents.capturePage();
             const fs = require('fs');
-            const screenshotPath = path.join(process.cwd(), 'logs', 'screenshots', `screenshot-${Date.now()}.png`);
+            const screenshotPath = path.join(getScreenshotsDir(), `screenshot-${Date.now()}.png`);
             fs.mkdirSync(path.dirname(screenshotPath), { recursive: true });
             fs.writeFileSync(screenshotPath, image.toPNG());
             return { success: true, path: screenshotPath };
@@ -434,7 +443,7 @@ function setupIpc() {
             logger.info(`[Execute Task] 正在截图...`);
             const image = await browserView.webContents.capturePage();
             const fs = require('fs');
-            const screenshotPath = path.join(process.cwd(), 'logs', 'screenshots', `task-${taskId}-${Date.now()}.png`);
+            const screenshotPath = path.join(getScreenshotsDir(), `task-${taskId}-${Date.now()}.png`);
             fs.mkdirSync(path.dirname(screenshotPath), { recursive: true });
             fs.writeFileSync(screenshotPath, image.toPNG());
             logger.info(`[Execute Task] 截图已保存: ${screenshotPath}`);
