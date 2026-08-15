@@ -1,0 +1,19 @@
+# Dependencies
+node_modules/
+
+# Runtime data & logs
+data/
+logs/
+
+# IDE / tooling
+.agent/
+.codex/
+.trae/
+.codebuddy/
+
+# Nested repo copy
+github/
+
+# OS
+.DS_Store
+Thumbs.db

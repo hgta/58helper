@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <style>
+        body {
+            margin: 0;
+            background: transparent;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            width: 512px;
+            height: 512px;
+        }
+    </style>
+</head>
+<body>
+    <svg width="512" height="512" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+            <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+                <stop offset="0%" style="stop-color:#1a1a2e"/>
+                <stop offset="100%" style="stop-color:#16213e"/>
+            </linearGradient>
+            <linearGradient id="accentGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+                <stop offset="0%" style="stop-color:#667eea"/>
+                <stop offset="100%" style="stop-color:#764ba2"/>
+            </linearGradient>
+            <filter id="glow">
+                <feGaussianBlur stdDeviation="3" result="blur"/>
+                <feMerge>
+                    <feMergeNode in="blur"/>
+                    <feMergeNode in="blur"/>
+                </feMerge>
+            </filter>
+        </defs>
+        
+        <circle cx="256" cy="256" r="240" fill="url(#bgGrad)"/>
+        <circle cx="256" cy="256" r="230" stroke="url(#accentGrad)" stroke-width="4" fill="none" opacity="0.8"/>
+        <circle cx="256" cy="256" r="200" stroke="#667eea" stroke-width="1" fill="none" opacity="0.3" stroke-dasharray="10 5"/>
+        
+        <g transform="translate(256, 220)">
+            <rect x="-60" y="-50" width="120" height="100" rx="20" fill="#252542" stroke="url(#accentGrad)" stroke-width="3"/>
+            <circle cx="-25" cy="-10" r="15" fill="#667eea" filter="url(#glow)"/>
+            <circle cx="25" cy="-10" r="15" fill="#667eea" filter="url(#glow)"/>
+            <line x1="0" y1="-50" x2="0" y2="-80" stroke="#667eea" stroke-width="3" stroke-linecap="round"/>
+            <circle cx="0" cy="-85" r="6" fill="#764ba2"/>
+        </g>
+        
+        <g transform="translate(256, 320)">
+            <rect x="-70" y="-35" width="140" height="70" rx="8" fill="#1e1e35" stroke="#667eea" stroke-width="2"/>
+            <rect x="-70" y="-35" width="140" height="12" rx="8" fill="url(#accentGrad)" opacity="0.5"/>
+            <circle cx="-55" cy="-27" r="3" fill="#ff5f56"/>
+            <circle cx="-45" cy="-27" r="3" fill="#ffbd2e"/>
+            <circle cx="-35" cy="-27" r="3" fill="#27ca40"/>
+            <line x1="-50" y1="-5" x2="50" y2="-5" stroke="#667eea" stroke-width="3" stroke-linecap="round" opacity="0.8"/>
+            <line x1="-50" y1="8" x2="30" y2="8" stroke="#764ba2" stroke-width="3" stroke-linecap="round" opacity="0.6"/>
+            <line x1="-50" y1="20" x2="20" y2="20" stroke="#667eea" stroke-width="3" stroke-linecap="round" opacity="0.4"/>
+        </g>
+        
+        <text x="256" y="460" text-anchor="middle" font-family="Arial, sans-serif" font-size="24" font-weight="bold" fill="#667eea" opacity="0.8">58</text>
+    </svg>
+</body>
+</html>

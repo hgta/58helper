@@ -1,0 +1,46 @@
+# 定时浏览器自动化工具配置
+
+# 数据库配置
+database:
+  path: "./data/browser_automation.db"
+  # 可选: 内存数据库
+  # path: ":memory:"
+
+# 浏览器配置
+browser:
+  headless: true
+  timeout: 30000  # 30秒超时（毫秒）
+  userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+
+# 调度配置
+scheduler:
+  interval: 60000  # 1分钟间隔（毫秒）
+  maxRetries: 2
+  retryDelay: 5000  # 重试延迟（毫秒）
+
+# 网址列表（示例）
+urls:
+  - url: "https://example.com/page1"
+    buttonSelectors: [".btn-primary", "#submit-button"]
+  - url: "https://example.com/page2"
+    buttonSelectors: ["button[type='submit']"]
+
+# 按钮选择器默认值
+defaultButtonSelectors:
+  - ".btn-primary"
+  - "#submit-button"
+  - "button[type='submit']"
+  - "input[type='submit']"
+  - "button:contains('提交')"
+
+# 日志配置
+logging:
+  level: "info"
+  file: "./logs/app.log"
+  maxSize: "10m"
+  maxFiles: 5
+
+# 访问控制
+accessControl:
+  dailyLimit: 1  # 每个网址每日访问次数限制
+  resetHour: 0   # 每日重置时间（0-23）

@@ -1,0 +1,1182 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self' 'unsafe-inline' data:; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline';">
+    <title>自动化浏览器</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            -webkit-user-select: none;
+            user-select: none;
+        }
+        
+        html, body {
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #1a1a2e;
+            color: #eee;
+        }
+        
+        /* 顶部工具栏 */
+        .toolbar {
+            position: fixed;
+            top: 0;
+            left: 280px;
+            right: 0;
+            height: 42px;
+            background: #252542;
+            display: flex;
+            align-items: center;
+            padding: 0 12px;
+            gap: 8px;
+            border-bottom: 1px solid #333;
+            -webkit-app-region: drag;
+            z-index: 100;
+        }
+        
+        .toolbar-left {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            -webkit-app-region: no-drag;
+        }
+        
+        .toolbar-btn {
+            width: 28px;
+            height: 28px;
+            border: none;
+            border-radius: 5px;
+            background: #3a3a5c;
+            color: #fff;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 14px;
+            transition: background 0.2s;
+        }
+        
+        .toolbar-btn:hover {
+            background: #4a4a6c;
+        }
+        
+        .toolbar-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        
+        .zoom-display {
+            min-width: 45px;
+            text-align: center;
+            font-size: 11px;
+            color: #888;
+            background: #1e1e35;
+            padding: 4px 6px;
+            border-radius: 4px;
+        }
+        
+        .url-bar {
+            flex: 1;
+            height: 30px;
+            background: #1e1e35;
+            border: 1px solid #444;
+            border-radius: 6px;
+            padding: 0 12px;
+            color: #fff;
+            font-size: 13px;
+            -webkit-app-region: no-drag;
+            -webkit-user-select: text;
+            user-select: text;
+        }
+        
+        .url-bar:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+        
+        .window-controls {
+            display: flex;
+            gap: 6px;
+            -webkit-app-region: no-drag;
+        }
+        
+        .win-btn {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            border: none;
+            cursor: pointer;
+        }
+        
+        .win-btn.close { background: #ff5f56; }
+        .win-btn.minimize { background: #ffbd2e; }
+        .win-btn.maximize { background: #27ca40; }
+        
+        /* 侧边栏 */
+        .sidebar {
+            position: fixed;
+            left: 0;
+            top: 0;
+            bottom: 0;
+            width: 280px;
+            background: #1a1a2e;
+            border-right: 1px solid #333;
+            display: flex;
+            flex-direction: column;
+            z-index: 101;
+        }
+        
+        .sidebar-header {
+            padding: 12px 15px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        }
+        
+        .sidebar-header h1 {
+            font-size: 15px;
+            margin-bottom: 2px;
+        }
+        
+        .sidebar-header p {
+            font-size: 11px;
+            opacity: 0.8;
+        }
+        
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 6px;
+            padding: 10px;
+            background: #252542;
+        }
+        
+        .stat-item {
+            text-align: center;
+            padding: 8px 4px;
+            background: #1e1e35;
+            border-radius: 6px;
+        }
+        
+        .stat-item .value {
+            font-size: 18px;
+            font-weight: bold;
+            color: #667eea;
+        }
+        
+        .stat-item .label {
+            font-size: 9px;
+            color: #888;
+            margin-top: 2px;
+        }
+        
+        .control-section {
+            padding: 10px;
+            border-bottom: 1px solid #333;
+        }
+        
+        .control-section h3 {
+            font-size: 11px;
+            color: #888;
+            margin-bottom: 8px;
+        }
+        
+        .control-btns {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+        }
+        
+        .btn {
+            padding: 8px 12px;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 12px;
+            font-weight: 600;
+            transition: all 0.2s;
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+        }
+        
+        .btn:hover {
+            transform: translateY(-1px);
+        }
+        
+        .btn-primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+        
+        .btn-success {
+            background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);
+            color: white;
+        }
+        
+        .btn-danger {
+            background: linear-gradient(135deg, #eb3349 0%, #f45c43 100%);
+            color: white;
+        }
+        
+        .btn-secondary {
+            background: #3a3a5c;
+            color: #fff;
+        }
+        
+        /* 任务列表 */
+        .task-section {
+            flex: 1;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+            min-height: 0;
+        }
+        
+        .task-header {
+            padding: 10px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid #333;
+            flex-wrap: wrap;
+            gap: 6px;
+        }
+        
+        .task-header h3 {
+            font-size: 12px;
+        }
+        
+        .task-list {
+            flex: 1;
+            overflow-y: auto;
+            padding: 8px;
+        }
+        
+        .task-item {
+            background: #252542;
+            border-radius: 6px;
+            padding: 10px;
+            margin-bottom: 6px;
+            border: 2px solid transparent;
+            transition: all 0.2s;
+        }
+        
+        .task-item:hover {
+            border-color: #444;
+        }
+        
+        .task-item.executing {
+            border-color: #667eea;
+            animation: pulse 2s infinite;
+        }
+        
+        .task-item.completed {
+            border-color: #38ef7d;
+        }
+        
+        .task-item.selected {
+            border-color: #667eea;
+            background: #2a2a4a;
+        }
+        
+        .task-checkbox {
+            width: 16px;
+            height: 16px;
+            cursor: pointer;
+            accent-color: #667eea;
+        }
+        
+        .task-header-row {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 4px;
+        }
+        
+        .task-name {
+            font-size: 13px;
+            font-weight: 500;
+            flex: 1;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        
+        .task-priority {
+            font-size: 10px;
+            font-weight: 600;
+            color: #667eea;
+            background: rgba(102, 126, 234, 0.15);
+            padding: 2px 6px;
+            border-radius: 3px;
+            min-width: 24px;
+            text-align: center;
+        }
+        
+        @keyframes pulse {
+            0%, 100% { box-shadow: 0 0 0 0 rgba(102, 126, 234, 0.4); }
+            50% { box-shadow: 0 0 0 8px rgba(102, 126, 234, 0); }
+        }
+        
+        .task-url {
+            font-size: 11px;
+            color: #fff;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            margin-bottom: 4px;
+        }
+        
+        .task-selectors {
+            font-size: 9px;
+            color: #888;
+            font-family: monospace;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            margin-bottom: 6px;
+        }
+        
+        .task-actions {
+            display: flex;
+            gap: 4px;
+        }
+        
+        .btn-small {
+            padding: 5px 8px;
+            font-size: 10px;
+        }
+        
+        /* 日志 */
+        .log-section {
+            height: 180px;
+            border-top: 1px solid #333;
+            display: flex;
+            flex-direction: column;
+        }
+        
+        .log-header {
+            padding: 6px 10px;
+            background: #252542;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .log-header h4 {
+            font-size: 11px;
+        }
+        
+        .log-container {
+            flex: 1;
+            overflow-y: auto;
+            padding: 6px 10px;
+            font-family: 'Courier New', monospace;
+            font-size: 10px;
+            background: #0d0d1a;
+        }
+        
+        .log-item {
+            padding: 2px 0;
+            border-bottom: 1px solid #222;
+        }
+        
+        .log-time {
+            color: #666;
+            margin-right: 6px;
+        }
+        
+        .log-success { color: #38ef7d; }
+        .log-error { color: #f45c43; }
+        .log-info { color: #fff; }
+        .log-warning { color: #f9ca24; }
+        
+        /* 模态框 */
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0,0,0,0.7);
+            z-index: 200;
+            align-items: center;
+            justify-content: center;
+        }
+        
+        .modal.show {
+            display: flex;
+        }
+        
+        .modal-content {
+            background: #252542;
+            border-radius: 10px;
+            padding: 20px;
+            width: 380px;
+            max-width: 90%;
+        }
+        
+        .modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+        }
+        
+        .modal-close {
+            background: none;
+            border: none;
+            color: #888;
+            font-size: 20px;
+            cursor: pointer;
+        }
+        
+        .form-group {
+            margin-bottom: 12px;
+        }
+        
+        .form-group label {
+            display: block;
+            font-size: 11px;
+            color: #aaa;
+            margin-bottom: 4px;
+        }
+        
+        .form-group input,
+        .form-group textarea {
+            width: 100%;
+            padding: 8px 10px;
+            background: #1e1e35;
+            border: 1px solid #444;
+            border-radius: 5px;
+            color: #fff;
+            font-size: 13px;
+            -webkit-user-select: text;
+            user-select: text;
+        }
+        
+        .form-group input:focus,
+        .form-group textarea:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+        
+        .form-group textarea {
+            min-height: 70px;
+            resize: vertical;
+            font-family: monospace;
+        }
+
+        /* 多步骤样式 */
+        .modal-content {
+            width: 500px;
+            max-height: 85vh;
+            overflow-y: auto;
+        }
+
+        .steps-container {
+            max-height: 400px;
+            overflow-y: auto;
+            border: 1px solid #444;
+            border-radius: 6px;
+            padding: 10px;
+            margin-bottom: 12px;
+            background: #1e1e35;
+        }
+
+        .step-item {
+            background: #252542;
+            border-radius: 6px;
+            padding: 10px;
+            margin-bottom: 8px;
+            border-left: 3px solid #667eea;
+        }
+
+        .step-item:last-child {
+            margin-bottom: 0;
+        }
+
+        .step-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 8px;
+        }
+
+        .step-number {
+            font-size: 12px;
+            font-weight: 600;
+            color: #667eea;
+        }
+
+        .step-remove {
+            background: none;
+            border: none;
+            color: #f45c43;
+            cursor: pointer;
+            font-size: 16px;
+            padding: 0 4px;
+        }
+
+        .step-remove:hover {
+            color: #ff6b6b;
+        }
+
+        .step-url {
+            font-size: 12px;
+            color: #fff;
+            margin-bottom: 4px;
+            word-break: break-all;
+        }
+
+        .step-selectors {
+            font-size: 10px;
+            color: #888;
+        }
+
+        .btn-add-step {
+            background: #3a3a5c;
+            color: #667eea;
+            border: 1px dashed #667eea;
+            width: 100%;
+            padding: 8px;
+            margin-bottom: 12px;
+        }
+
+        .btn-add-step:hover {
+            background: #4a4a6c;
+        }
+        
+        /* 滚动条样式 */
+        ::-webkit-scrollbar {
+            width: 5px;
+            height: 5px;
+        }
+        
+        ::-webkit-scrollbar-track {
+            background: #1a1a2e;
+        }
+        
+        ::-webkit-scrollbar-thumb {
+            background: #444;
+            border-radius: 3px;
+        }
+        
+        ::-webkit-scrollbar-thumb:hover {
+            background: #555;
+        }
+    </style>
+</head>
+<body>
+    <!-- 顶部工具栏 -->
+    <div class="toolbar">
+        <div class="toolbar-left">
+            <button class="toolbar-btn" id="btn-back" title="后退">←</button>
+            <button class="toolbar-btn" id="btn-forward" title="前进">→</button>
+            <button class="toolbar-btn" id="btn-refresh" title="刷新">⟳</button>
+            <span style="width: 1px; height: 20px; background: #444; margin: 0 4px;"></span>
+            <button class="toolbar-btn" id="btn-zoom-out" title="缩小">−</button>
+            <div class="zoom-display" id="zoom-level">100%</div>
+            <button class="toolbar-btn" id="btn-zoom-in" title="放大">+</button>
+        </div>
+        <input type="text" class="url-bar" id="url-input" placeholder="输入网址...">
+        <div class="window-controls">
+            <button class="win-btn minimize" id="win-min"></button>
+            <button class="win-btn maximize" id="win-max"></button>
+            <button class="win-btn close" id="win-close"></button>
+        </div>
+    </div>
+    
+    <!-- 侧边栏 -->
+    <div class="sidebar">
+        <div class="sidebar-header">
+            <h1>🤖 自动化浏览器</h1>
+            <p>任务管理与自动执行</p>
+        </div>
+        
+        <div class="stats-grid">
+            <div class="stat-item">
+                <div class="value" id="stat-total">0</div>
+                <div class="label">任务</div>
+            </div>
+            <div class="stat-item">
+                <div class="value" id="stat-enabled">0</div>
+                <div class="label">启用</div>
+            </div>
+            <div class="stat-item">
+                <div class="value" id="stat-today">0</div>
+                <div class="label">今日</div>
+            </div>
+            <div class="stat-item">
+                <div class="value" id="stat-success">0</div>
+                <div class="label">成功</div>
+            </div>
+        </div>
+        
+        <div class="control-section">
+            <h3>⚡ 快捷操作</h3>
+            <div class="control-btns">
+                <button class="btn btn-success" id="btn-execute-all">▶ 执行全部</button>
+                <button class="btn btn-primary" id="btn-add-task">+ 添加任务</button>
+            </div>
+        </div>
+        
+        <div class="task-section">
+            <div class="task-header">
+                <h3>📋 任务列表</h3>
+                <div style="display: flex; gap: 6px; align-items: center;">
+                    <input type="checkbox" id="select-all" class="task-checkbox" onchange="toggleSelectAll()">
+                    <label for="select-all" style="font-size: 11px; color: #888; cursor: pointer;">全选</label>
+                    <button class="btn btn-success btn-small" id="btn-batch-execute" onclick="executeSelectedTasks()">批量执行</button>
+                </div>
+            </div>
+            <div class="task-list" id="task-list">
+                <div style="text-align: center; padding: 15px; color: #666;">加载中...</div>
+            </div>
+        </div>
+        
+        <div class="log-section">
+            <div class="log-header">
+                <h4>📜 执行日志</h4>
+                <button class="btn btn-secondary btn-small" id="btn-clear-log">清空</button>
+            </div>
+            <div class="log-container" id="log-container"></div>
+        </div>
+    </div>
+    
+    <!-- 添加/编辑任务模态框 -->
+    <div class="modal" id="add-modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 id="modal-title">添加新任务</h3>
+                <button class="modal-close" id="modal-close">&times;</button>
+            </div>
+            <form id="task-form">
+                <input type="hidden" id="task-id">
+                <div class="form-group">
+                    <label>任务名称</label>
+                    <input type="text" id="task-name" placeholder="给任务起个名字">
+                </div>
+                <div class="form-group">
+                    <label>访问步骤（每个步骤间隔5秒）</label>
+                    <div class="steps-container" id="steps-container">
+                        <!-- 步骤将动态添加 -->
+                    </div>
+                    <button type="button" class="btn btn-add-step" onclick="addStep()">+ 添加步骤</button>
+                </div>
+                <div class="form-group">
+                    <label>优先级</label>
+                    <input type="number" id="task-priority" value="1" min="1" max="100">
+                </div>
+                <button type="submit" class="btn btn-primary" style="width: 100%;">保存任务</button>
+            </form>
+        </div>
+    </div>
+
+    <!-- 步骤编辑模态框 -->
+    <div class="modal" id="step-modal">
+        <div class="modal-content" style="width: 400px;">
+            <div class="modal-header">
+                <h3 id="step-modal-title">添加步骤</h3>
+                <button class="modal-close" id="step-modal-close">&times;</button>
+            </div>
+            <form id="step-form">
+                <div class="form-group">
+                    <label>网页地址</label>
+                    <input type="url" id="step-url" required placeholder="https://example.com">
+                </div>
+                <div class="form-group">
+                    <label>按钮选择器（每行一个，可选）</label>
+                    <textarea id="step-selectors" placeholder=".btn-submit&#10;#submit-btn"></textarea>
+                </div>
+                <div class="form-group">
+                    <label>确认框按钮（每行一个，可选）</label>
+                    <textarea id="step-confirm-selectors" placeholder=".btn-confirm&#10;确定"></textarea>
+                </div>
+                <button type="submit" class="btn btn-primary" style="width: 100%;">保存步骤</button>
+            </form>
+        </div>
+    </div>
+    
+    <script>
+        const { ipcRenderer } = require('electron');
+        
+        let tasks = [];
+        let selectedTasks = [];
+        let isExecuting = false;
+        let currentZoom = 1;
+        let currentSteps = [];  // 当前编辑的步骤列表
+        let editingStepIndex = -1;  // 当前编辑的步骤索引，-1表示新增
+        
+        // 初始化
+        document.addEventListener('DOMContentLoaded', async () => {
+            loadTasks();
+            loadStats();
+            setupEventListeners();
+            addLog('应用已启动', 'info');
+        });
+        
+        // 设置事件监听
+        function setupEventListeners() {
+            // 窗口控制
+            document.getElementById('win-min').addEventListener('click', () => {
+                ipcRenderer.send('window-minimize');
+            });
+            document.getElementById('win-max').addEventListener('click', () => {
+                ipcRenderer.send('window-maximize');
+            });
+            document.getElementById('win-close').addEventListener('click', () => {
+                ipcRenderer.send('window-close');
+            });
+            
+            // 浏览器控制
+            document.getElementById('btn-back').addEventListener('click', async () => {
+                await ipcRenderer.invoke('browser-back');
+            });
+            document.getElementById('btn-forward').addEventListener('click', async () => {
+                await ipcRenderer.invoke('browser-forward');
+            });
+            document.getElementById('btn-refresh').addEventListener('click', async () => {
+                await ipcRenderer.invoke('browser-refresh');
+            });
+            
+            // 缩放控制
+            document.getElementById('btn-zoom-in').addEventListener('click', () => setZoom(currentZoom + 0.1));
+            document.getElementById('btn-zoom-out').addEventListener('click', () => setZoom(currentZoom - 0.1));
+            
+            // URL输入
+            document.getElementById('url-input').addEventListener('keypress', async (e) => {
+                if (e.key === 'Enter') {
+                    let url = e.target.value.trim();
+                    if (!url.startsWith('http')) {
+                        url = 'https://' + url;
+                    }
+                    await ipcRenderer.invoke('browser-navigate', url);
+                }
+            });
+            
+            // 任务控制
+            document.getElementById('btn-execute-all').addEventListener('click', executeAllTasks);
+            document.getElementById('btn-add-task').addEventListener('click', () => {
+                // 重置表单为添加模式
+                document.getElementById('task-id').value = '';
+                document.getElementById('task-form').reset();
+                currentSteps = [];
+                renderSteps();
+                document.getElementById('task-priority').value = tasks.length + 1;
+                document.getElementById('modal-title').textContent = '添加新任务';
+                document.getElementById('add-modal').classList.add('show');
+                ipcRenderer.send('modal-show');
+                setTimeout(() => {
+                    document.getElementById('task-name').focus();
+                }, 100);
+            });
+            document.getElementById('modal-close').addEventListener('click', () => {
+                document.getElementById('add-modal').classList.remove('show');
+                ipcRenderer.send('modal-hide');
+            });
+            // 点击模态框背景关闭
+            document.getElementById('add-modal').addEventListener('click', (e) => {
+                if (e.target.id === 'add-modal') {
+                    document.getElementById('add-modal').classList.remove('show');
+                    ipcRenderer.send('modal-hide');
+                }
+            });
+            document.getElementById('btn-clear-log').addEventListener('click', () => {
+                document.getElementById('log-container').innerHTML = '';
+            });
+            
+            // 表单提交
+            document.getElementById('task-form').addEventListener('submit', async (e) => {
+                e.preventDefault();
+                const taskId = document.getElementById('task-id').value;
+                const name = document.getElementById('task-name').value.trim();
+                const priority = parseInt(document.getElementById('task-priority').value);
+                
+                if (currentSteps.length === 0) {
+                    addLog('请至少添加一个步骤', 'error');
+                    return;
+                }
+                
+                // 检查任务名称是否重复
+                const checkResult = await ipcRenderer.invoke('check-task-name', name, taskId ? parseInt(taskId) : null);
+                if (checkResult.success && checkResult.exists) {
+                    const confirmed = confirm(`任务名称"${name}"已存在，是否继续保存？`);
+                    if (!confirmed) {
+                        return;
+                    }
+                }
+                
+                let result;
+                if (taskId) {
+                    // 编辑模式
+                    result = await ipcRenderer.invoke('url-update', parseInt(taskId), {
+                        name,
+                        steps: currentSteps,
+                        priority
+                    });
+                } else {
+                    // 添加模式
+                    result = await ipcRenderer.invoke('url-create', {
+                        name,
+                        steps: currentSteps,
+                        priority,
+                        enabled: true
+                    });
+                }
+                
+                if (result.success) {
+                    document.getElementById('add-modal').classList.remove('show');
+                    ipcRenderer.send('modal-hide');
+                    loadTasks();
+                    addLog(taskId ? '任务更新成功' : '任务添加成功', 'success');
+                    document.getElementById('task-form').reset();
+                    document.getElementById('task-id').value = '';
+                } else {
+                    addLog('操作失败: ' + result.error, 'error');
+                }
+            });
+            
+            // 监听浏览器URL变化
+            ipcRenderer.on('browser-url-changed', (event, url) => {
+                document.getElementById('url-input').value = url;
+            });
+            
+            ipcRenderer.on('browser-title-changed', (event, title) => {
+                document.title = title + ' - 自动化浏览器';
+            });
+            
+            // 监听缩放变化
+            ipcRenderer.on('zoom-changed', (event, zoomLevel) => {
+                currentZoom = zoomLevel;
+                updateZoomDisplay();
+            });
+        }
+        
+        // 缩放功能
+        async function setZoom(level) {
+            currentZoom = Math.max(0.25, Math.min(5, level));
+            currentZoom = Math.round(currentZoom * 100) / 100;
+            await ipcRenderer.invoke('browser-set-zoom', currentZoom);
+            updateZoomDisplay();
+        }
+        
+        function updateZoomDisplay() {
+            document.getElementById('zoom-level').textContent = Math.round(currentZoom * 100) + '%';
+        }
+        
+        // 加载任务
+        async function loadTasks() {
+            const result = await ipcRenderer.invoke('url-get-all');
+            if (result.success) {
+                tasks = result.data;
+                renderTasks();
+                updateStats();
+            }
+        }
+        
+        // 渲染任务列表
+        function renderTasks() {
+            const container = document.getElementById('task-list');
+            
+            if (tasks.length === 0) {
+                container.innerHTML = '<div style="text-align: center; padding: 15px; color: #666;">暂无任务，点击上方按钮添加</div>';
+                return;
+            }
+            
+            container.innerHTML = tasks.map((task, i) => `
+                <div class="task-item ${selectedTasks.includes(task.id) ? 'selected' : ''}" id="task-${task.id}">
+                    <div class="task-header-row">
+                        <input type="checkbox" class="task-checkbox" 
+                            ${selectedTasks.includes(task.id) ? 'checked' : ''} 
+                            onchange="toggleTaskSelection(${task.id})">
+                        <span class="task-priority">P${task.priority || i + 1}</span>
+                        <div class="task-name">${task.name || `任务 ${i + 1}`}</div>
+                    </div>
+                    <div class="task-selectors">${task.steps?.length || 0} 个步骤</div>
+                    <div class="task-actions">
+                        <button class="btn btn-success btn-small" onclick="executeTask(${task.id})">执行</button>
+                        <button class="btn btn-primary btn-small" onclick="editTask(${task.id})">编辑</button>
+                        <button class="btn btn-secondary btn-small" onclick="toggleTask(${task.id})">${task.enabled ? '禁用' : '启用'}</button>
+                        <button class="btn btn-danger btn-small" onclick="deleteTask(${task.id})">删除</button>
+                    </div>
+                </div>
+            `).join('');
+        }
+        
+        // 加载统计
+        async function loadStats() {
+            const result = await ipcRenderer.invoke('get-stats');
+            if (result.success) {
+                document.getElementById('stat-total').textContent = result.data.totalUrls;
+                document.getElementById('stat-enabled').textContent = result.data.enabledUrls;
+                document.getElementById('stat-today').textContent = result.data.todayExecutions;
+                document.getElementById('stat-success').textContent = result.data.todaySuccess;
+            }
+        }
+        
+        function updateStats() {
+            document.getElementById('stat-total').textContent = tasks.length;
+            document.getElementById('stat-enabled').textContent = tasks.filter(t => t.enabled).length;
+        }
+        
+        // 执行单个任务
+        async function executeTask(taskId) {
+            const taskEl = document.getElementById(`task-${taskId}`);
+            if (taskEl) taskEl.classList.add('executing');
+            
+            addLog('正在执行任务...', 'info');
+            
+            try {
+                const result = await ipcRenderer.invoke('execute-task', taskId);
+                
+                if (taskEl) {
+                    taskEl.classList.remove('executing');
+                    if (result.success) {
+                        taskEl.classList.add('completed');
+                        addLog('✅ 任务执行成功', 'success');
+                        if (result.screenshot) {
+                            addLog(`截图: ${result.screenshot}`, 'info');
+                        }
+                    } else {
+                        addLog('❌ 执行失败: ' + result.error, 'error');
+                    }
+                }
+            } catch (err) {
+                addLog('❌ 执行异常: ' + err.message, 'error');
+                if (taskEl) {
+                    taskEl.classList.remove('executing');
+                }
+            }
+            
+            loadStats();
+        }
+        
+        // 执行所有任务
+        async function executeAllTasks() {
+            if (isExecuting) {
+                addLog('已有任务在执行中', 'warning');
+                return;
+            }
+            
+            const enabledTasks = tasks.filter(t => t.enabled);
+            if (enabledTasks.length === 0) {
+                addLog('没有启用的任务', 'warning');
+                return;
+            }
+            
+            isExecuting = true;
+            addLog(`开始执行 ${enabledTasks.length} 个任务`, 'info');
+            
+            for (let i = 0; i < enabledTasks.length; i++) {
+                addLog(`[${i + 1}/${enabledTasks.length}] 执行: ${enabledTasks[i].name || '未命名任务'}`, 'info');
+                await executeTask(enabledTasks[i].id);
+                await new Promise(r => setTimeout(r, 2000));
+            }
+            
+            isExecuting = false;
+            addLog('全部任务执行完成', 'success');
+        }
+        
+        // 切换任务状态
+        async function toggleTask(id) {
+            const result = await ipcRenderer.invoke('url-toggle', id);
+            if (result.success) {
+                loadTasks();
+                addLog('任务状态已更新', 'success');
+            }
+        }
+        
+        // 编辑任务
+        function editTask(id) {
+            const task = tasks.find(t => t.id === id);
+            if (!task) return;
+            
+            document.getElementById('task-id').value = task.id;
+            document.getElementById('task-name').value = task.name || '';
+            currentSteps = task.steps || [];
+            renderSteps();
+            document.getElementById('task-priority').value = task.priority || 1;
+            document.getElementById('modal-title').textContent = '编辑任务';
+            document.getElementById('add-modal').classList.add('show');
+            ipcRenderer.send('modal-show');
+            setTimeout(() => {
+                document.getElementById('task-name').focus();
+            }, 100);
+        }
+
+        // 渲染步骤列表
+        function renderSteps() {
+            const container = document.getElementById('steps-container');
+            if (currentSteps.length === 0) {
+                container.innerHTML = '<div style="text-align: center; color: #666; padding: 20px;">暂无步骤，点击下方按钮添加</div>';
+                return;
+            }
+            
+            container.innerHTML = currentSteps.map((step, i) => `
+                <div class="step-item">
+                    <div class="step-header">
+                        <span class="step-number">步骤 ${i + 1}</span>
+                        <div>
+                            <button type="button" class="btn btn-secondary btn-small" onclick="editStep(${i})" style="padding: 2px 6px; font-size: 10px;">编辑</button>
+                            <button type="button" class="step-remove" onclick="removeStep(${i})">×</button>
+                        </div>
+                    </div>
+                    <div class="step-url">${step.url}</div>
+                    <div class="step-selectors">
+                        ${step.button_selectors?.length ? '按钮: ' + step.button_selectors.join(', ') : ''}
+                        ${step.confirm_selectors?.length ? ' | 确认: ' + step.confirm_selectors.join(', ') : ''}
+                        ${!step.button_selectors?.length && !step.confirm_selectors?.length ? '无按钮操作' : ''}
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        // 添加步骤
+        function addStep() {
+            editingStepIndex = -1;
+            document.getElementById('step-url').value = '';
+            document.getElementById('step-selectors').value = '';
+            document.getElementById('step-confirm-selectors').value = '';
+            document.getElementById('step-modal-title').textContent = '添加步骤';
+            document.getElementById('step-modal').classList.add('show');
+        }
+
+        // 编辑步骤
+        function editStep(index) {
+            editingStepIndex = index;
+            const step = currentSteps[index];
+            document.getElementById('step-url').value = step.url || '';
+            document.getElementById('step-selectors').value = (step.button_selectors || []).join('\n');
+            document.getElementById('step-confirm-selectors').value = (step.confirm_selectors || []).join('\n');
+            document.getElementById('step-modal-title').textContent = '编辑步骤';
+            document.getElementById('step-modal').classList.add('show');
+        }
+
+        // 移除步骤
+        function removeStep(index) {
+            currentSteps.splice(index, 1);
+            renderSteps();
+        }
+
+        // 步骤表单提交
+        document.getElementById('step-form').addEventListener('submit', (e) => {
+            e.preventDefault();
+            const url = document.getElementById('step-url').value.trim();
+            const button_selectors = document.getElementById('step-selectors').value
+                .split('\n')
+                .map(s => s.trim())
+                .filter(s => s);
+            const confirm_selectors = document.getElementById('step-confirm-selectors').value
+                .split('\n')
+                .map(s => s.trim())
+                .filter(s => s);
+            
+            const step = { url, button_selectors, confirm_selectors };
+            
+            if (editingStepIndex === -1) {
+                currentSteps.push(step);
+            } else {
+                currentSteps[editingStepIndex] = step;
+            }
+            
+            document.getElementById('step-modal').classList.remove('show');
+            renderSteps();
+        });
+
+        // 步骤模态框关闭
+        document.getElementById('step-modal-close').addEventListener('click', () => {
+            document.getElementById('step-modal').classList.remove('show');
+        });
+        document.getElementById('step-modal').addEventListener('click', (e) => {
+            if (e.target.id === 'step-modal') {
+                document.getElementById('step-modal').classList.remove('show');
+            }
+        });
+        
+        // 切换任务选择
+        function toggleTaskSelection(id) {
+            const index = selectedTasks.indexOf(id);
+            if (index > -1) {
+                selectedTasks.splice(index, 1);
+            } else {
+                selectedTasks.push(id);
+            }
+            renderTasks();
+            updateSelectAllState();
+        }
+        
+        // 全选/取消全选
+        function toggleSelectAll() {
+            const selectAllCheckbox = document.getElementById('select-all');
+            if (selectAllCheckbox.checked) {
+                selectedTasks = tasks.map(t => t.id);
+            } else {
+                selectedTasks = [];
+            }
+            renderTasks();
+        }
+        
+        // 更新全选状态
+        function updateSelectAllState() {
+            const selectAllCheckbox = document.getElementById('select-all');
+            selectAllCheckbox.checked = tasks.length > 0 && selectedTasks.length === tasks.length;
+        }
+        
+        // 批量执行选中的任务
+        async function executeSelectedTasks() {
+            if (isExecuting) {
+                addLog('已有任务在执行中', 'warning');
+                return;
+            }
+            
+            if (selectedTasks.length === 0) {
+                addLog('请先选择要执行的任务', 'warning');
+                return;
+            }
+            
+            isExecuting = true;
+            addLog(`开始批量执行 ${selectedTasks.length} 个任务`, 'info');
+            
+            for (let i = 0; i < selectedTasks.length; i++) {
+                const task = tasks.find(t => t.id === selectedTasks[i]);
+                addLog(`[${i + 1}/${selectedTasks.length}] 执行: ${task.name || task.url}`, 'info');
+                await executeTask(selectedTasks[i]);
+                await new Promise(r => setTimeout(r, 2000));
+            }
+            
+            isExecuting = false;
+            selectedTasks = [];
+            renderTasks();
+            addLog('批量执行完成', 'success');
+        }
+        
+        // 删除任务
+        async function deleteTask(id) {
+            if (!confirm('确定删除此任务？')) return;
+            const result = await ipcRenderer.invoke('url-delete', id);
+            if (result.success) {
+                loadTasks();
+                addLog('任务已删除', 'success');
+            }
+        }
+        
+        // 添加日志
+        function addLog(message, type = 'info') {
+            const container = document.getElementById('log-container');
+            const time = new Date().toLocaleTimeString();
+            const item = document.createElement('div');
+            item.className = `log-item log-${type}`;
+            item.innerHTML = `<span class="log-time">${time}</span>${message}`;
+            container.appendChild(item);
+            container.scrollTop = container.scrollHeight;
+        }
+    </script>
+</body>
+</html>

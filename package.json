@@ -1,0 +1,38 @@
+{
+  "name": "58helper",
+  "version": "1.0.0",
+  "description": "",
+  "main": "electron/main.js",
+  "scripts": {
+    "start": "electron .",
+    "web": "node src/index.js web",
+    "dev": "nodemon src/index.js",
+    "db:init": "node src/db/init.js",
+    "db:init:seed": "node src/db/init.js --seed",
+    "db:migrate": "node src/db/migrate.js",
+    "test": "jest --passWithNoTests",
+    "test:unit": "jest --testPathPattern=unit",
+    "test:integration": "jest --testPathPattern=integration",
+    "build": "npx pkg . --out-path dist",
+    "lint": "eslint src/",
+    "format": "prettier --write src/",
+    "setup": "npm install && npx playwright install chromium"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "commander": "^14.0.3",
+    "dotenv": "^17.3.1",
+    "ejs": "^5.0.1",
+    "express": "^5.2.1",
+    "js-yaml": "^4.1.1",
+    "playwright": "^1.58.2",
+    "sqlite3": "^6.0.1",
+    "winston": "^3.19.0"
+  },
+  "devDependencies": {
+    "electron": "^41.1.0"
+  }
+}
