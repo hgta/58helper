@@ -941,9 +941,6 @@
                     if (result.success) {
                         taskEl.classList.add('completed');
                         addLog('✅ 任务执行成功', 'success');
-                        if (result.screenshot) {
-                            addLog(`截图: ${result.screenshot}`, 'info');
-                        }
                     } else {
                         addLog('❌ 执行失败: ' + result.error, 'error');
                     }

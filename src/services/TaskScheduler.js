@@ -151,8 +151,6 @@ class TaskScheduler {
 
     // 执行单个任务逻辑
     async executeTask(task) {
-        let screenshotPath = null;
-        
         try {
             // 1. 导航到页面
             const navResult = await this.browserController.navigateTo(task.url);
@@ -178,18 +176,12 @@ class TaskScheduler {
                 clickResult = { success: true, message: 'No click needed' };
             }
 
-            // 4. 截图 (可选)
-            const screenshot = await this.browserController.takeScreenshot();
-            if (screenshot.success) {
-                screenshotPath = screenshot.path;
-            }
-
-            // 5. 记录成功结果
+            // 4. 记录成功结果
             await AccessHistoryModel.create({
                 url_id: task.id,
                 success: clickResult.success,
                 error_message: clickResult.success ? null : clickResult.error,
-                screenshot_path: screenshotPath
+                screenshot_path: null
             });
 
             return clickResult;
@@ -200,7 +192,7 @@ class TaskScheduler {
                 url_id: task.id,
                 success: false,
                 error_message: `Exception: ${error.message}`,
-                screenshot_path: screenshotPath
+                screenshot_path: null
             });
             return { success: false, error: error.message };
         }

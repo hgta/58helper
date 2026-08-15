@@ -439,27 +439,18 @@ function setupIpc() {
                 }
             }
 
-            // 最后截图
-            logger.info(`[Execute Task] 正在截图...`);
-            const image = await browserView.webContents.capturePage();
-            const fs = require('fs');
-            const screenshotPath = path.join(getScreenshotsDir(), `task-${taskId}-${Date.now()}.png`);
-            fs.mkdirSync(path.dirname(screenshotPath), { recursive: true });
-            fs.writeFileSync(screenshotPath, image.toPNG());
-            logger.info(`[Execute Task] 截图已保存: ${screenshotPath}`);
-
             // 记录历史
             await AccessHistoryModel.create({
                 url_id: task.id,
                 success: true,
                 error_message: null,
-                screenshot_path: screenshotPath
+                screenshot_path: null
             });
 
             logger.info(`[Execute Task] 任务执行完成`);
             mainWindow.webContents.send('task-completed', { taskId, success: true });
 
-            return { success: true, screenshot: screenshotPath };
+            return { success: true };
         } catch (error) {
             logger.error(`[Execute Task] 执行失败: ${error.message}`);
             mainWindow.webContents.send('task-completed', { taskId, success: false, error: error.message });

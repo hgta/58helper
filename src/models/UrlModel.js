@@ -94,13 +94,20 @@ class UrlModel {
     async getAll(options = {}) {
         await this.init();
         
-        const { enabledOnly = false, limit = 100, offset = 0 } = options;
+        const { enabledOnly = false, limit = null, offset = 0 } = options;
         
         let whereClause = '';
         let params = [];
         
         if (enabledOnly) {
             whereClause = 'WHERE enabled = 1';
+        }
+        
+        // 仅当显式传入 limit 时才加 LIMIT 子句，否则返回全部记录
+        let limitClause = '';
+        if (limit != null) {
+            limitClause = 'LIMIT ? OFFSET ?';
+            params.push(limit, offset);
         }
         
         const urls = await this.db.all(`
@@ -111,8 +118,8 @@ class UrlModel {
             FROM urls 
             ${whereClause}
             ORDER BY priority ASC, id ASC
-            LIMIT ? OFFSET ?
-        `, [...params, limit, offset]);
+            ${limitClause}
+        `, params);
 
         // 解析JSON字符串
         return urls.map(url => {
