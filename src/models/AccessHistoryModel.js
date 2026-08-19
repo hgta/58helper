@@ -106,20 +106,27 @@ class AccessHistoryModel {
     // 获取今天的访问记录
     async getToday(options = {}) {
         await this.init();
-        
-        const { successOnly = false, limit = 100, offset = 0 } = options;
-        
+
+        const { successOnly = false, limit = null, offset = 0 } = options;
+
         const today = new Date().toISOString().split('T')[0];
-        
+
         let whereClause = 'WHERE ah.access_date = ?';
         const params = [today];
-        
+
         if (successOnly) {
             whereClause += ' AND ah.success = 1';
         }
-        
+
+        // 仅当显式传入 limit 时才加 LIMIT 子句，否则返回全部今日记录
+        let limitClause = '';
+        if (limit != null) {
+            limitClause = 'LIMIT ? OFFSET ?';
+            params.push(limit, offset);
+        }
+
         const history = await this.db.all(`
-            SELECT 
+            SELECT
                 ah.id, ah.url_id, ah.access_date, ah.access_time,
                 ah.success, ah.error_message, ah.screenshot_path,
                 u.name as task_name
@@ -127,8 +134,8 @@ class AccessHistoryModel {
             LEFT JOIN urls u ON ah.url_id = u.id
             ${whereClause}
             ORDER BY ah.access_time DESC
-            LIMIT ? OFFSET ?
-        `, [...params, limit, offset]);
+            ${limitClause}
+        `, params);
 
         return history;
     }
