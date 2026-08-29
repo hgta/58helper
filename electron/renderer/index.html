@@ -696,6 +696,16 @@
                     <textarea id="step-selectors" placeholder=".btn-submit&#10;#submit-btn"></textarea>
                 </div>
                 <div class="form-group">
+                    <label>
+                        <input type="checkbox" id="step-iterate-all">
+                        轮询页面所有相同元素
+                    </label>
+                </div>
+                <div class="form-group" id="iterate-interval-group" style="display: none;">
+                    <label>轮询间隔（秒）</label>
+                    <input type="number" id="step-iterate-interval" value="10" min="1">
+                </div>
+                <div class="form-group">
                     <label>确认框按钮（每行一个，可选）</label>
                     <textarea id="step-confirm-selectors" placeholder=".btn-confirm&#10;确定"></textarea>
                 </div>
@@ -724,6 +734,12 @@
         
         // 设置事件监听
         function setupEventListeners() {
+            // 轮询勾选联动：勾选时显示间隔输入框
+            document.getElementById('step-iterate-all').addEventListener('change', (e) => {
+                document.getElementById('iterate-interval-group').style.display =
+                    e.target.checked ? 'block' : 'none';
+            });
+            
             // 窗口控制
             document.getElementById('win-min').addEventListener('click', () => {
                 ipcRenderer.send('window-minimize');
@@ -1029,6 +1045,7 @@
                     <div class="step-selectors">
                         ${step.button_selectors?.length ? '按钮: ' + step.button_selectors.join(', ') : ''}
                         ${step.confirm_selectors?.length ? ' | 确认: ' + step.confirm_selectors.join(', ') : ''}
+                        ${step.iterate_all ? ` | 🔁 轮询所有(间隔${step.iterate_interval || 10}s)` : ''}
                         ${!step.button_selectors?.length && !step.confirm_selectors?.length ? '无按钮操作' : ''}
                     </div>
                 </div>
@@ -1041,6 +1058,9 @@
             document.getElementById('step-url').value = '';
             document.getElementById('step-selectors').value = '';
             document.getElementById('step-confirm-selectors').value = '';
+            document.getElementById('step-iterate-all').checked = false;
+            document.getElementById('step-iterate-interval').value = 10;
+            document.getElementById('iterate-interval-group').style.display = 'none';
             document.getElementById('step-modal-title').textContent = '添加步骤';
             document.getElementById('step-modal').classList.add('show');
         }
@@ -1052,6 +1072,9 @@
             document.getElementById('step-url').value = step.url || '';
             document.getElementById('step-selectors').value = (step.button_selectors || []).join('\n');
             document.getElementById('step-confirm-selectors').value = (step.confirm_selectors || []).join('\n');
+            document.getElementById('step-iterate-all').checked = !!step.iterate_all;
+            document.getElementById('step-iterate-interval').value = step.iterate_interval || 10;
+            document.getElementById('iterate-interval-group').style.display = step.iterate_all ? 'block' : 'none';
             document.getElementById('step-modal-title').textContent = '编辑步骤';
             document.getElementById('step-modal').classList.add('show');
         }
@@ -1074,8 +1097,10 @@
                 .split('\n')
                 .map(s => s.trim())
                 .filter(s => s);
+            const iterate_all = document.getElementById('step-iterate-all').checked;
+            const iterate_interval = parseInt(document.getElementById('step-iterate-interval').value, 10) || 10;
             
-            const step = { url, button_selectors, confirm_selectors };
+            const step = { url, button_selectors, confirm_selectors, iterate_all, iterate_interval };
             
             if (editingStepIndex === -1) {
                 currentSteps.push(step);
