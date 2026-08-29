@@ -90,6 +90,47 @@ function updateBrowserViewBounds() {
     browserView.setAutoResize({ width: true, height: true });
 }
 
+// 处理确认框：先按选择器查找，找不到则按文本匹配按钮，点击第一个可见的
+async function handleConfirmBox(webContents, confirmSelectors) {
+    if (!confirmSelectors || confirmSelectors.length === 0) return false;
+
+    await new Promise(resolve => setTimeout(resolve, 1500));
+    logger.info(`[Execute Task] 尝试点击确认框按钮: ${confirmSelectors.join(', ')}`);
+
+    for (const selector of confirmSelectors) {
+        try {
+            const confirmClicked = await webContents.executeJavaScript(`
+                (function() {
+                    let el = document.querySelector('${selector.replace(/'/g, "\\'")}');
+                    if (!el || el.offsetParent === null) {
+                        const buttons = document.querySelectorAll('button, [role="button"], .btn, input[type="button"], input[type="submit"]');
+                        const targetText = '${selector.replace(/'/g, "\\'")}'.toLowerCase();
+                        for (const btn of buttons) {
+                            if (btn.innerText && btn.innerText.toLowerCase().includes(targetText)) {
+                                el = btn;
+                                break;
+                            }
+                        }
+                    }
+                    if (el && el.offsetParent !== null) {
+                        el.click();
+                        return true;
+                    }
+                    return false;
+                })()
+            `);
+            if (confirmClicked) {
+                logger.info(`[Execute Task] 确认框按钮点击成功: ${selector}`);
+                await new Promise(resolve => setTimeout(resolve, 500));
+                return true;
+            }
+        } catch (e) {
+            logger.debug(`[Execute Task] 确认框选择器 ${selector} 失败: ${e.message}`);
+        }
+    }
+    return false;
+}
+
 // IPC 处理
 function setupIpc() {
     // 模态框显示时隐藏/恢复 BrowserView
@@ -370,67 +411,72 @@ function setupIpc() {
                 // 点击按钮
                 const buttonSelectors = step.button_selectors || [];
                 if (buttonSelectors.length > 0) {
-                    logger.info(`[Execute Task] 尝试点击按钮: ${buttonSelectors.join(', ')}`);
-                    for (const selector of buttonSelectors) {
-                        try {
-                            const clicked = await browserView.webContents.executeJavaScript(`
-                                (function() {
-                                    const el = document.querySelector('${selector.replace(/'/g, "\\'")}');
-                                    if (el && el.offsetParent !== null) {
-                                        el.click();
-                                        return true;
-                                    }
-                                    return false;
-                                })()
-                            `);
-                            if (clicked) {
-                                logger.info(`[Execute Task] 按钮点击成功: ${selector}`);
-                                break;
+                    if (step.iterate_all) {
+                        // 轮询模式：依次点击所有匹配的可见元素，每个元素后处理确认框，间隔可配置（默认10秒）
+                        const intervalSec = Number(step.iterate_interval) > 0 ? Number(step.iterate_interval) : 10;
+                        logger.info(`[Execute Task] 轮询点击按钮: ${buttonSelectors.join(', ')}`);
+                        for (const selector of buttonSelectors) {
+                            while (true) {
+                                const result = await browserView.webContents.executeJavaScript(`
+                                    (function() {
+                                        const els = document.querySelectorAll('${selector.replace(/'/g, "\\'")}');
+                                        let clicked = false;
+                                        for (const el of els) {
+                                            if (el.dataset.iterateClicked === '1') continue;
+                                            if (el.offsetParent === null) continue;
+                                            el.dataset.iterateClicked = '1';
+                                            el.click();
+                                            clicked = true;
+                                            break;
+                                        }
+                                        let remaining = 0;
+                                        for (const el of els) {
+                                            if (el.dataset.iterateClicked === '1') continue;
+                                            if (el.offsetParent === null) continue;
+                                            remaining++;
+                                        }
+                                        return { clicked, remaining };
+                                    })()
+                                `);
+                                if (!result.clicked) break;
+                                logger.info(`[Execute Task] 轮询点击成功: ${selector}（剩余 ${result.remaining} 个未点击）`);
+                                // 每个元素点击后立即处理确认框
+                                await handleConfirmBox(browserView.webContents, step.confirm_selectors || []);
+                                // 还有剩余元素才等待间隔，最后一次点击后不额外等待
+                                if (result.remaining > 0 && intervalSec > 0) {
+                                    logger.info(`[Execute Task] 等待 ${intervalSec} 秒后点击下一个元素...`);
+                                    await new Promise(resolve => setTimeout(resolve, intervalSec * 1000));
+                                }
                             }
-                        } catch (e) {
-                            logger.debug(`[Execute Task] 选择器 ${selector} 失败: ${e.message}`);
+                        }
+                    } else {
+                        // 原逻辑：只点击第一个匹配元素
+                        logger.info(`[Execute Task] 尝试点击按钮: ${buttonSelectors.join(', ')}`);
+                        for (const selector of buttonSelectors) {
+                            try {
+                                const clicked = await browserView.webContents.executeJavaScript(`
+                                    (function() {
+                                        const el = document.querySelector('${selector.replace(/'/g, "\\'")}');
+                                        if (el && el.offsetParent !== null) {
+                                            el.click();
+                                            return true;
+                                        }
+                                        return false;
+                                    })()
+                                `);
+                                if (clicked) {
+                                    logger.info(`[Execute Task] 按钮点击成功: ${selector}`);
+                                    break;
+                                }
+                            } catch (e) {
+                                logger.debug(`[Execute Task] 选择器 ${selector} 失败: ${e.message}`);
+                            }
                         }
                     }
                 }
 
                 // 处理确认框
-                const confirmSelectors = step.confirm_selectors || [];
-                if (confirmSelectors.length > 0) {
-                    await new Promise(resolve => setTimeout(resolve, 1500));
-                    logger.info(`[Execute Task] 尝试点击确认框按钮: ${confirmSelectors.join(', ')}`);
-
-                    for (const selector of confirmSelectors) {
-                        try {
-                            const confirmClicked = await browserView.webContents.executeJavaScript(`
-                                (function() {
-                                    let el = document.querySelector('${selector.replace(/'/g, "\\'")}');
-                                    if (!el || el.offsetParent === null) {
-                                        const buttons = document.querySelectorAll('button, [role="button"], .btn, input[type="button"], input[type="submit"]');
-                                        const targetText = '${selector.replace(/'/g, "\\'")}'.toLowerCase();
-                                        for (const btn of buttons) {
-                                            if (btn.innerText && btn.innerText.toLowerCase().includes(targetText)) {
-                                                el = btn;
-                                                break;
-                                            }
-                                        }
-                                    }
-                                    if (el && el.offsetParent !== null) {
-                                        el.click();
-                                        return true;
-                                    }
-                                    return false;
-                                })()
-                            `);
-                            if (confirmClicked) {
-                                logger.info(`[Execute Task] 确认框按钮点击成功: ${selector}`);
-                                await new Promise(resolve => setTimeout(resolve, 500));
-                                break;
-                            }
-                        } catch (e) {
-                            logger.debug(`[Execute Task] 确认框选择器 ${selector} 失败: ${e.message}`);
-                        }
-                    }
-                }
+                await handleConfirmBox(browserView.webContents, step.confirm_selectors || []);
 
                 // 步骤间隔5秒（最后一个步骤不需要）
                 if (i < steps.length - 1) {
