@@ -20,6 +20,7 @@
 - [x] 3.4 轮询循环输出结构化进度：开始显示总数，每个元素显示 `[k/N]` 进度与元素描述（innerText/aria-label/title/id/className/tagName 优先级），间隔等待显示秒数，最后一次点击后不等待
 - [x] 3.5 轮询无可见元素时输出提示日志并跳过该选择器
 - [x] 3.6 可见性判断从 `offsetParent` 升级为 `getBoundingClientRect()` 宽高检查，兼容 uni-app 自定义元素（如 `uni-image`），同步应用于轮询、非轮询按钮点击与确认框处理
+- [x] 3.7 主界面侧边栏统计卡片下方新增「当前任务已执行」计时器条（`#task-timer`），执行中绿色脉冲高亮；单任务执行由 `executeTask` 启停，批量执行由外层 `batchRunning` 统一启停，批量总耗时含任务间间隔
 
 ## 4. 验证
 
