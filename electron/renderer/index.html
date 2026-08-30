@@ -873,6 +873,13 @@
                 currentZoom = zoomLevel;
                 updateZoomDisplay();
             });
+            
+            // 主进程日志实时推送到日志面板
+            ipcRenderer.on('log-message', (event, entry) => {
+                if (entry && entry.message) {
+                    addLog(entry.message, entry.level === 'error' ? 'error' : entry.level === 'warn' ? 'warning' : 'info');
+                }
+            });
         }
         
         // 缩放功能

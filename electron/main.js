@@ -4,6 +4,7 @@ const { getDatabase } = require('../src/db/database');
 const UrlModel = require('../src/models/UrlModel');
 const AccessHistoryModel = require('../src/models/AccessHistoryModel');
 const logger = require('../src/utils/logger');
+const { loggerEvents } = require('../src/utils/logger');
 const { getScreenshotsDir } = require('../src/utils/paths');
 const fs = require('fs');
 
@@ -101,18 +102,26 @@ async function handleConfirmBox(webContents, confirmSelectors) {
         try {
             const confirmClicked = await webContents.executeJavaScript(`
                 (function() {
+                    function isVisible(node) {
+                        try {
+                            const rect = node.getBoundingClientRect();
+                            return rect.width > 0 && rect.height > 0;
+                        } catch (e) {
+                            return false;
+                        }
+                    }
                     let el = document.querySelector('${selector.replace(/'/g, "\\'")}');
-                    if (!el || el.offsetParent === null) {
+                    if (!el || !isVisible(el)) {
                         const buttons = document.querySelectorAll('button, [role="button"], .btn, input[type="button"], input[type="submit"]');
                         const targetText = '${selector.replace(/'/g, "\\'")}'.toLowerCase();
                         for (const btn of buttons) {
-                            if (btn.innerText && btn.innerText.toLowerCase().includes(targetText)) {
+                            if (btn.innerText && btn.innerText.toLowerCase().includes(targetText) && isVisible(btn)) {
                                 el = btn;
                                 break;
                             }
                         }
                     }
-                    if (el && el.offsetParent !== null) {
+                    if (el && isVisible(el)) {
                         el.click();
                         return true;
                     }
@@ -133,6 +142,13 @@ async function handleConfirmBox(webContents, confirmSelectors) {
 
 // IPC 处理
 function setupIpc() {
+    // 日志实时推送到 UI 日志面板（logger.js 的 RendererTransport 发出事件）
+    loggerEvents.on('log', (entry) => {
+        if (mainWindow && mainWindow.webContents && !mainWindow.webContents.isDestroyed()) {
+            mainWindow.webContents.send('log-message', entry);
+        }
+    });
+
     // 模态框显示时隐藏/恢复 BrowserView
     ipcMain.on('modal-show', () => {
         if (browserView) {
@@ -416,35 +432,88 @@ function setupIpc() {
                         const intervalSec = Number(step.iterate_interval) > 0 ? Number(step.iterate_interval) : 10;
                         logger.info(`[Execute Task] 轮询点击按钮: ${buttonSelectors.join(', ')}`);
                         for (const selector of buttonSelectors) {
+                            // 先统计该选择器的可见元素总数
+                            const initResult = await browserView.webContents.executeJavaScript(`
+                                (function() {
+                                    function isVisible(node) {
+                                        try {
+                                            const rect = node.getBoundingClientRect();
+                                            return rect.width > 0 && rect.height > 0;
+                                        } catch (e) {
+                                            return false;
+                                        }
+                                    }
+                                    const els = document.querySelectorAll('${selector.replace(/'/g, "\\'")}');
+                                    let visibleCount = 0;
+                                    for (const el of els) {
+                                        if (isVisible(el)) visibleCount++;
+                                    }
+                                    return { total: els.length, visibleCount };
+                                })()
+                            `).catch(() => ({ total: 0, visibleCount: 0 }));
+                            if (!initResult || initResult.visibleCount === 0) {
+                                logger.info(`[Execute Task] 轮询: 选择器 ${selector} 无可见元素，跳过`);
+                                continue;
+                            }
+                            logger.info(`[Execute Task] 轮询: 选择器 ${selector} 共 ${initResult.visibleCount} 个可见元素，开始依次点击`);
+
+                            let clickedCount = 0;
                             while (true) {
                                 const result = await browserView.webContents.executeJavaScript(`
                                     (function() {
+                                        function isVisible(node) {
+                                            try {
+                                                const rect = node.getBoundingClientRect();
+                                                return rect.width > 0 && rect.height > 0;
+                                            } catch (e) {
+                                                return false;
+                                            }
+                                        }
                                         const els = document.querySelectorAll('${selector.replace(/'/g, "\\'")}');
                                         let clicked = false;
+                                        let info = null;
                                         for (const el of els) {
                                             if (el.dataset.iterateClicked === '1') continue;
-                                            if (el.offsetParent === null) continue;
+                                            if (!isVisible(el)) continue;
                                             el.dataset.iterateClicked = '1';
                                             el.click();
                                             clicked = true;
+                                            // 提取元素描述：文本 > aria-label > title > id > class > tag
+                                            const text = (el.innerText || el.textContent || '').trim().replace(/\\s+/g, ' ').slice(0, 30);
+                                            info = {
+                                                tag: (el.tagName || '').toLowerCase(),
+                                                id: el.id || '',
+                                                cls: typeof el.className === 'string' ? el.className : (el.getAttribute('class') || ''),
+                                                text: text,
+                                                aria: el.getAttribute('aria-label') || '',
+                                                title: el.getAttribute('title') || ''
+                                            };
                                             break;
                                         }
                                         let remaining = 0;
                                         for (const el of els) {
                                             if (el.dataset.iterateClicked === '1') continue;
-                                            if (el.offsetParent === null) continue;
-                                            remaining++;
+                                            if (isVisible(el)) remaining++;
                                         }
-                                        return { clicked, remaining };
+                                        return { clicked, remaining, info };
                                     })()
-                                `);
+                                `).catch(() => ({ clicked: false, remaining: 0, info: null }));
                                 if (!result.clicked) break;
-                                logger.info(`[Execute Task] 轮询点击成功: ${selector}（剩余 ${result.remaining} 个未点击）`);
+                                clickedCount++;
+
+                                // 构造元素描述
+                                let desc = '未知元素';
+                                if (result.info) {
+                                    const i = result.info;
+                                    desc = i.text || i.aria || i.title || (i.id ? '#' + i.id : '') || (i.cls ? '.' + i.cls.split(' ')[0] : '') || i.tag;
+                                }
+                                logger.info(`[Execute Task] 轮询 [${clickedCount}/${initResult.visibleCount}] 点击: ${selector} -> ${desc}（剩余 ${result.remaining} 个未点击）`);
+
                                 // 每个元素点击后立即处理确认框
                                 await handleConfirmBox(browserView.webContents, step.confirm_selectors || []);
                                 // 还有剩余元素才等待间隔，最后一次点击后不额外等待
                                 if (result.remaining > 0 && intervalSec > 0) {
-                                    logger.info(`[Execute Task] 等待 ${intervalSec} 秒后点击下一个元素...`);
+                                    logger.info(`[Execute Task] 轮询: 等待 ${intervalSec} 秒后点击下一个...`);
                                     await new Promise(resolve => setTimeout(resolve, intervalSec * 1000));
                                 }
                             }
@@ -456,8 +525,16 @@ function setupIpc() {
                             try {
                                 const clicked = await browserView.webContents.executeJavaScript(`
                                     (function() {
+                                        function isVisible(node) {
+                                            try {
+                                                const rect = node.getBoundingClientRect();
+                                                return rect.width > 0 && rect.height > 0;
+                                            } catch (e) {
+                                                return false;
+                                            }
+                                        }
                                         const el = document.querySelector('${selector.replace(/'/g, "\\'")}');
-                                        if (el && el.offsetParent !== null) {
+                                        if (el && isVisible(el)) {
                                             el.click();
                                             return true;
                                         }

@@ -12,9 +12,19 @@
 - [x] 2.2 按钮点击块：`step.iterate_all` 为真时进入轮询模式（`querySelectorAll` 循环点击未处理且可见的元素，每个元素后调用 `handleConfirmBox`，间隔 `iterate_interval` 秒，间隔取值容错默认 10）
 - [x] 2.3 非轮询路径保持现状（只点第一个匹配元素）
 
-## 3. 验证
+## 3. 轮询过程日志可观测性
 
-- [x] 3.1 `node --check` 校验 `electron/main.js` 语法；渲染层无 JS 报错
-- [x] 3.2 界面：编辑步骤时能勾选轮询、设置间隔；保存后步骤卡片显示轮询标记；再次编辑能正确回填
-- [x] 3.3 执行：勾选轮询的任务对页面上多个匹配元素依次点击，每个间隔为配置秒数，每个元素点击后确认框被处理
-- [x] 3.4 回归：未勾选轮询的任务行为与之前一致（只点第一个）
+- [x] 3.1 `src/utils/logger.js` 增加 `RendererTransport`（winston 自定义 transport）与 `loggerEvents`（EventEmitter），所有日志发出 `{ level, message, timestamp }` 事件
+- [x] 3.2 `electron/main.js` 订阅 `loggerEvents.on('log')`，通过 `mainWindow.webContents.send('log-message', entry)` 推到渲染进程
+- [x] 3.3 `electron/renderer/index.html` 监听 `log-message` IPC 调用 `addLog(message, level)` 实时渲染
+- [x] 3.4 轮询循环输出结构化进度：开始显示总数，每个元素显示 `[k/N]` 进度与元素描述（innerText/aria-label/title/id/className/tagName 优先级），间隔等待显示秒数，最后一次点击后不等待
+- [x] 3.5 轮询无可见元素时输出提示日志并跳过该选择器
+- [x] 3.6 可见性判断从 `offsetParent` 升级为 `getBoundingClientRect()` 宽高检查，兼容 uni-app 自定义元素（如 `uni-image`），同步应用于轮询、非轮询按钮点击与确认框处理
+
+## 4. 验证
+
+- [x] 4.1 `node --check` 校验 `electron/main.js`、`src/utils/logger.js` 语法；渲染层无 JS 报错
+- [x] 4.2 界面：编辑步骤时能勾选轮询、设置间隔；保存后步骤卡片显示轮询标记；再次编辑能正确回填
+- [x] 4.3 执行：勾选轮询的任务对页面上多个匹配元素依次点击，每个间隔为配置秒数，每个元素点击后确认框被处理
+- [x] 4.4 日志：执行轮询任务时 UI 日志面板实时显示总匹配数、`[k/N]` 进度、元素描述与等待提示
+- [x] 4.5 回归：未勾选轮询的任务行为与之前一致（只点第一个）

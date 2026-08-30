@@ -1,9 +1,31 @@
 const winston = require('winston');
 const path = require('path');
+const { EventEmitter } = require('events');
 const { getLogsDir } = require('./paths');
 
 // 确保日志目录存在（Electron 打包后写入用户数据目录）
 const logsDir = getLogsDir();
+
+// 日志事件总线：main.js 订阅后将日志实时推送到渲染进程的 UI 日志面板
+const loggerEvents = new EventEmitter();
+
+// 自定义 transport：每条日志发出事件（用于 UI 实时显示）
+class RendererTransport extends winston.Transport {
+    constructor(opts) {
+        super(opts || {});
+        this.level = (opts && opts.level) || 'info';
+    }
+    log(info, callback) {
+        setImmediate(() => {
+            loggerEvents.emit('log', {
+                level: info.level,
+                message: info.message,
+                timestamp: info.timestamp
+            });
+        });
+        callback();
+    }
+}
 
 const logger = winston.createLogger({
     level: process.env.LOG_LEVEL || 'info',
@@ -29,7 +51,9 @@ const logger = winston.createLogger({
             filename: path.join(logsDir, 'combined.log'),
             maxsize: 10485760, // 10MB
             maxFiles: 10
-        })
+        }),
+        // 实时推送到 UI 日志面板
+        new RendererTransport()
     ]
 });
 
@@ -49,3 +73,4 @@ if (process.env.NODE_ENV !== 'production') {
 }
 
 module.exports = logger;
+module.exports.loggerEvents = loggerEvents;
