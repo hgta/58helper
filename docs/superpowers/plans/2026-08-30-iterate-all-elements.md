@@ -2,6 +2,7 @@
 change: iterate-all-elements-on-click
 design-doc: openspec/changes/iterate-all-elements-on-click/design.md
 base-ref: 14c151782d153888151cc60aadfadeb89c8ccf42
+archived-with: 2026-08-30-iterate-all-elements-on-click
 ---
 
 # 轮询点击所有匹配元素 Implementation Plan
@@ -24,6 +25,7 @@ base-ref: 14c151782d153888151cc60aadfadeb89c8ccf42
 - 所有日志沿用现有 `logger.info/warn/debug` 与 `[Execute Task]` 前缀风格。
 - 提交消息用英文（PowerShell 中文会乱码），遵循 Conventional Commits。
 
+archived-with: 2026-08-30-iterate-all-elements-on-click
 ---
 
 ### Task 1: 步骤编辑界面新增轮询勾选框与间隔输入框
@@ -149,6 +151,7 @@ git add electron/renderer/index.html
 git commit -m "feat(ui): add iterate-all checkbox and interval input to step editor"
 ```
 
+archived-with: 2026-08-30-iterate-all-elements-on-click
 ---
 
 ### Task 2: 执行逻辑支持轮询点击所有匹配元素
@@ -304,6 +307,7 @@ git add electron/main.js
 git commit -m "feat(exec): iterate and click all matching elements with interval"
 ```
 
+archived-with: 2026-08-30-iterate-all-elements-on-click
 ---
 
 ### Task 3: 验证
