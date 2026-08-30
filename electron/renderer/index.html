@@ -155,6 +155,47 @@
             background: #252542;
         }
         
+        /* 任务执行计时器 */
+        .timer-bar {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 10px 14px;
+            background: linear-gradient(135deg, #1e1e35, #252542);
+            border-bottom: 1px solid #333;
+            border-top: 1px solid #333;
+        }
+        
+        .timer-icon {
+            font-size: 16px;
+        }
+        
+        .timer-label {
+            font-size: 11px;
+            color: #888;
+            flex: 1;
+        }
+        
+        .timer-value {
+            font-size: 18px;
+            font-weight: 700;
+            font-family: 'Consolas', 'Courier New', monospace;
+            color: #667eea;
+            font-variant-numeric: tabular-nums;
+            min-width: 82px;
+            text-align: right;
+        }
+        
+        .timer-value.active {
+            color: #38ef7d;
+            animation: timerPulse 1s infinite;
+        }
+        
+        @keyframes timerPulse {
+            0%, 100% { text-shadow: 0 0 4px rgba(56, 239, 125, 0.4); }
+            50% { text-shadow: 0 0 14px rgba(56, 239, 125, 0.9); }
+        }
+        
         .stat-item {
             text-align: center;
             padding: 8px 4px;
@@ -619,6 +660,13 @@
             </div>
         </div>
         
+        <!-- 当前任务执行耗时计时器 -->
+        <div class="timer-bar">
+            <span class="timer-icon">⏱️</span>
+            <span class="timer-label">当前任务已执行</span>
+            <span class="timer-value" id="task-timer">00:00:00</span>
+        </div>
+        
         <div class="control-section">
             <h3>⚡ 快捷操作</h3>
             <div class="control-btns">
@@ -949,8 +997,51 @@
             document.getElementById('stat-enabled').textContent = tasks.filter(t => t.enabled).length;
         }
         
+        // ===== 任务执行计时器 =====
+        let taskTimerStart = null;
+        let taskTimerInterval = null;
+        let batchRunning = false; // 批量执行时由外层统一管理计时器，避免单任务启停干扰
+
+        function formatElapsed(ms) {
+            const totalSec = Math.floor(ms / 1000);
+            const h = String(Math.floor(totalSec / 3600)).padStart(2, '0');
+            const m = String(Math.floor((totalSec % 3600) / 60)).padStart(2, '0');
+            const s = String(totalSec % 60).padStart(2, '0');
+            return `${h}:${m}:${s}`;
+        }
+
+        function updateTaskTimer() {
+            const el = document.getElementById('task-timer');
+            if (!el) return;
+            if (taskTimerStart === null) {
+                el.textContent = '00:00:00';
+                return;
+            }
+            el.textContent = formatElapsed(Date.now() - taskTimerStart);
+        }
+
+        function startTaskTimer() {
+            if (taskTimerInterval) return; // 已在运行则不重置
+            taskTimerStart = Date.now();
+            updateTaskTimer();
+            taskTimerInterval = setInterval(updateTaskTimer, 1000);
+            const el = document.getElementById('task-timer');
+            if (el) el.classList.add('active');
+        }
+
+        function stopTaskTimer() {
+            if (taskTimerInterval) {
+                clearInterval(taskTimerInterval);
+                taskTimerInterval = null;
+            }
+            updateTaskTimer(); // 定格最终耗时
+            const el = document.getElementById('task-timer');
+            if (el) el.classList.remove('active');
+        }
+
         // 执行单个任务
         async function executeTask(taskId) {
+            if (!batchRunning) startTaskTimer();
             const taskEl = document.getElementById(`task-${taskId}`);
             if (taskEl) taskEl.classList.add('executing');
             
@@ -976,6 +1067,7 @@
             }
             
             loadStats();
+            if (!batchRunning) stopTaskTimer();
         }
         
         // 执行所有任务
@@ -992,6 +1084,8 @@
             }
             
             isExecuting = true;
+            batchRunning = true;
+            startTaskTimer();
             addLog(`开始执行 ${enabledTasks.length} 个任务`, 'info');
             
             for (let i = 0; i < enabledTasks.length; i++) {
@@ -1001,6 +1095,8 @@
             }
             
             isExecuting = false;
+            batchRunning = false;
+            stopTaskTimer();
             addLog('全部任务执行完成', 'success');
         }
         
@@ -1171,6 +1267,8 @@
             }
             
             isExecuting = true;
+            batchRunning = true;
+            startTaskTimer();
             addLog(`开始批量执行 ${selectedTasks.length} 个任务`, 'info');
             
             for (let i = 0; i < selectedTasks.length; i++) {
@@ -1181,6 +1279,8 @@
             }
             
             isExecuting = false;
+            batchRunning = false;
+            stopTaskTimer();
             selectedTasks = [];
             renderTasks();
             addLog('批量执行完成', 'success');
