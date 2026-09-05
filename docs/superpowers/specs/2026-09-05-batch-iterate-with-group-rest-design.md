@@ -2,6 +2,8 @@
 comet_change: batch-iterate-with-group-rest
 role: technical-design
 canonical_spec: openspec
+archived-with: 2026-09-05-batch-iterate-with-group-rest
+status: final
 ---
 
 # 轮询分批 + 组间休息 — 技术设计

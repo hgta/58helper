@@ -2,6 +2,7 @@
 change: batch-iterate-with-group-rest
 design-doc: docs/superpowers/specs/2026-09-05-batch-iterate-with-group-rest-design.md
 base-ref: 5d98d44d13e555a6bb6d01e68443c44d49b6a7cf
+archived-with: 2026-09-05-batch-iterate-with-group-rest
 ---
 
 # 轮询分批 + 组间休息 Implementation Plan
@@ -25,6 +26,7 @@ base-ref: 5d98d44d13e555a6bb6d01e68443c44d49b6a7cf
 - 所有日志沿用现有 `logger.info` 与 `[Execute Task]` 前缀风格。
 - 提交消息用英文（PowerShell 中文会乱码），遵循 Conventional Commits。
 
+archived-with: 2026-09-05-batch-iterate-with-group-rest
 ---
 
 ### Task 1: UI — 步骤编辑弹窗新增分批配置输入框
