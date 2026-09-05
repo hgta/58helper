@@ -67,19 +67,19 @@ iterate_batch_interval: 60    // M，新增：组间休息（秒，默认 60）
 <div class="form-group" id="iterate-interval-group" style="display: none;">
     <label>轮询间隔（秒）</label>
     <input type="number" id="step-iterate-interval" value="10" min="1">
-    <!-- 新增 ↓ -->
-    <label>每组连续点击数（个）</label>
-    <input type="number" id="step-iterate-batch-size" value="10" min="1">
-    <label>组间休息（秒）</label>
-    <input type="number" id="step-iterate-batch-interval" value="60" min="1">
+    <!-- 新增 ↓（分批可选填：留空=不分批，placeholder 提示默认） -->
+    <label>每组连续点击数（个，可选填）</label>
+    <input type="number" id="step-iterate-batch-size" placeholder="10" min="1">
+    <label>组间休息（秒，可选填）</label>
+    <input type="number" id="step-iterate-batch-interval" placeholder="60" min="1">
 </div>
 ```
 
 联动逻辑保持现状：仅勾选轮询时整组显示。同步修改：
 
-- `addStep()`：`step-iterate-batch-size` → 10，`step-iterate-batch-interval` → 60（与 interval 一并重置）。
-- `editStep(index)`：`step.iterate_batch_size || 10`、`step.iterate_batch_interval || 60` 回填。
-- submit 读取：`parseInt(...) || 10`、`parseInt(...) || 60`，写入 `step.iterate_batch_size` / `step.iterate_batch_interval`。
+- `addStep()`：`step-iterate-batch-size` → 10，`step-iterate-batch-interval` → 60（与 interval 一并重置，新建步骤默认分批 10/60）。
+- `editStep(index)`：回填 `step.iterate_batch_size` / `step.iterate_batch_interval`（值缺失/为 0 时留空，placeholder 显示默认）。**旧步骤（无字段）编辑后输入框留空**，避免「重存即被静默启用分批」。
+- submit 读取：仅当已勾选轮询且两字段均填有效正整数时，才写入 `step.iterate_batch_size` / `step.iterate_batch_interval`；任一为空/无效则不写入（该步骤不分批，行为与旧版一致）。
 - `renderSteps()` L1151 标记扩展为：`🔁 轮询所有(间隔10s, 分批10/休息60s)`；仅当 `iterate_all` 为真且字段有效时追加 `, 分批N/休息Ms` 片段，旧步骤不显示该片段。
 
 ### 执行逻辑（`electron/main.js` L460-519）
@@ -124,7 +124,7 @@ if (batchEnabled && result.remaining > 0 && clickedCount % rawBatchSize === 0) {
 
 | 取舍 | 说明 |
 |---|---|
-| 字段缺省 = 不分组 | 存量轮询步骤节奏不变；新建步骤经 UI 保存即带 N=10/M=60（用户可见默认值，可在编辑时改） |
+| 分批字段可选填 = 不分组 | 存量轮询步骤无论是否重新保存均节奏不变（编辑旧步骤时批次输入框留空、不填就不写字段）；仅当用户显式填写 N/M（或新建步骤接受默认 10/60）才启用分批 |
 | I 与 M 叠加而非替换 | 元素间隔保证单次操作最小时间窗，组间休息是叠加的长休，语义清晰互不干扰 |
 | clickedCount 每 selector 独立 | 变量在 `for selector` 循环体内声明，无需新增状态；跨 selector 不纠缠 |
 | 防御式取值 | 即使 JSON 被外部工具写入坏值，执行层也退回不分组，不崩溃不误等待 |
@@ -139,17 +139,20 @@ if (batchEnabled && result.remaining > 0 && clickedCount % rawBatchSize === 0) {
 
 - **静态**：`node --check electron/main.js`。
 - **手动界面验证**：
-  - 新建步骤勾选轮询 → 显示三个输入框，默认 10/10/60；保存后卡片显示 `分批10/休息60s`；再次编辑回填一致。
-  - 编辑旧步骤（无字段）→ 输入框回填默认值，不勾选轮询时整组隐藏。
+  - 新建步骤勾选轮询 → 显示三个输入框，批次默认 10/60（输入框已填）；保存后卡片显示 `分批10/休息60s`；再次编辑回填一致。
+  - 编辑旧步骤（无字段）→ 批次输入框留空（placeholder 显示 10/60），直接保存后卡片仍无分批标记、运行时不分批（重存不改变行为）。
+  - 编辑旧步骤并显式填写 N/M → 保存后卡片显示分批标记、运行时启用分批。
+  - 不勾选轮询时整组隐藏；保存的步骤对象不含批次字段。
 - **执行验证**：构造 25 个匹配元素的测试页，N=10/M=60/I=10：
   - 第 10 个点完后等 10s + 额外 60s（日志出现"组间休息"）；
   - 第 20 个点完后再休一次；末组 5 个点完即停，无第三次组间休息。
   - 确认框在组间休息前每次点击后仍被处理。
 - **回归**：
   - 直接构造无新字段的步骤 JSON 执行 → 行为与现状一致（无分组日志）。
+  - 通过 UI 重新编辑并保存旧步骤（未填批次字段）→ 步骤对象仍无批次字段，执行与旧版一致。
   - 字段为 0 / 空 / NaN 的步骤 → 等同不分批。
   - 未勾选轮询步骤（`iterate_all` 假）即使带字段也忽略 → 只点第一个。
 
 ## Spec Patch
 
-无。open 阶段 delta spec（`openspec/changes/batch-iterate-with-group-rest/specs/auto-interaction/spec.md`，ADDED Requirement「轮询分批组间休息」4 个场景）已与本设计一致，无需回写。
+delta spec（`openspec/changes/batch-iterate-with-group-rest/specs/auto-interaction/spec.md`，ADDED Requirement「轮询分批组间休息」）追加一个场景：「旧步骤经 UI 重存不静默启用分批」。其余 4 个场景与本设计一致。

@@ -20,3 +20,9 @@
 #### Scenario: 未勾选轮询时字段不生效
 - **WHEN** 步骤未勾选轮询（`iterate_all` 为假）
 - **THEN** 即使步骤对象带 `iterate_batch_size`/`iterate_batch_interval` 字段，系统也忽略之并执行非轮询点击行为
+
+#### Scenario: 旧步骤经 UI 重存不静默启用分批
+- **WHEN** 用户在编辑界面打开一个不含 `iterate_batch_size`/`iterate_batch_interval` 字段的存量轮询步骤
+- **AND** 未填写「每组连续点击数」与「组间休息」即保存
+- **THEN** 保存后的步骤对象仍不包含这两个字段，其执行行为与编辑前完全一致（逐元素间隔点击、不分批）
+- **AND** 仅当用户显式填写两个有效正整数并保存后，该步骤才启用分批
