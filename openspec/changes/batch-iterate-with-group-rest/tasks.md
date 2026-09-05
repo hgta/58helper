@@ -1,9 +1,9 @@
 ## 1. 步骤编辑界面（electron/renderer/index.html）
 
-- [x] 1.1 在「轮询间隔（秒）」输入框下方新增「每组连续点击数（个）」（`#step-iterate-batch-size`，默认 10，`min="1"`）与「组间休息（秒）」（`#step-iterate-batch-interval`，默认 60，`min="1"`），并入现有 `iterate-interval-group` 显示/隐藏联动（仅勾选轮询时显示）
-- [x] 1.2 `addStep()` 清空新字段（分别恢复默认 10 与 60）
-- [x] 1.3 `editStep(index)` 回填 `step.iterate_batch_size` / `step.iterate_batch_interval`
-- [x] 1.4 `step-form` 提交时读取新字段写入步骤对象（数值容错：空/NaN 落默认 10 / 60）
+- [x] 1.1 在「轮询间隔（秒）」输入框下方新增「每组连续点击数（个，可选填）」（`#step-iterate-batch-size`，placeholder 10，`min="1"`）与「组间休息（秒，可选填）」（`#step-iterate-batch-interval`，placeholder 60，`min="1"`），并入现有 `iterate-interval-group` 显示/隐藏联动（仅勾选轮询时显示）；字段可选填，留空 = 不分批
+- [x] 1.2 `addStep()` 清空并预填新字段默认 10 与 60（新建轮询步骤默认分批）
+- [x] 1.3 `editStep(index)` 对已含字段步骤回填值、对无字段步骤留空（`step.iterate_batch_size || ''`）
+- [x] 1.4 `step-form` 提交仅当已勾选轮询且 N/M 均填有效正整数时写入字段，否则步骤对象不含批次字段（空/NaN/未勾选轮询均不写）
 - [x] 1.5 `renderSteps()` 步骤卡片轮询标记追加分批信息（如 `🔁 轮询所有(间隔10s, 分批10/休息60s)`），旧步骤无字段时不显示分批部分
 
 ## 2. 执行逻辑（electron/main.js）

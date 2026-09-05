@@ -33,18 +33,20 @@ Electron 桌面应用的任务步骤以 JSON 存储在 `urls.steps` 列。上一
 **为何不在满 N 时替换元素间隔：** 元素间隔保证每次点击之间的最小时间窗（多为加载/响应缓冲），组间休息是叠加在其上的"长休"，两者目的不同，故叠加而非替换。
 
 ### 决策3: 字段取值与容错
-- UI 层：`step-iterate-batch-size` 与 `step-iterate-batch-interval` 两个 number 输入框，`min="1"`，仅当 `iterate_all` 勾选时显示（与 `iterate-interval-group` 同一组）。
-- 数据层：步骤对象新增 `iterate_batch_size`（默认 10）与 `iterate_batch_interval`（默认 60）。
-- 执行层防御：`batchSize = Number(step.iterate_batch_size)`，仅当 `Number.isInteger(batchSize) && batchSize > 0` 才启用分批；`batchIntervalSec = Number(step.iterate_batch_interval)`，同样要求 `> 0`；任一不满足则跳过组间休息逻辑。默认值处理与上一 change 的 `intervalSec` 一致（无字段 → 不启用，保持旧行为）。
+- UI 层：`step-iterate-batch-size` 与 `step-iterate-batch-interval` 两个 number 输入框，`min="1"`，仅当 `iterate_all` 勾选时显示（与 `iterate-interval-group` 同一组）。字段**可选填**（placeholder 提示默认 10/60），留空 = 不分批。
+- 数据层：步骤对象仅在用户填写有效值时新增 `iterate_batch_size` / `iterate_batch_interval`；空/无效时不写入（`addStep` 新建仍预填 10/60 默认值）。
+- 执行层防御：`batchSize = Number(step.iterate_batch_size)`，仅当 `Number.isInteger(batchSize) && batchSize > 0` 才启用分批；`batchIntervalSec = Number(step.iterate_batch_interval)`，同样要求 `> 0`；任一不满足则跳过组间休息逻辑（无字段 → 不启用，保持旧行为）。
 
-**为何不默认启用：** 旧步骤对象缺少这两个字段。若执行层对缺失字段套默认值（N=10/M=60），会悄悄改变所有存量轮询步骤的节奏，违背向后兼容目标。因此缺省 = 不分组。
+**为何缺省不启用：** 旧步骤对象缺少这两个字段。若执行层对缺失字段套默认值（N=10/M=60），会悄悄改变所有存量轮询步骤的节奏，违背向后兼容目标。故执行层缺省 = 不分组。
+
+**为何 UI 采用「可选填」而非无条件写默认：** 若 submit 对未填写字段套默认 10/60 写入步骤对象，则存量轮询步骤一经用户重新编辑保存（即使只改 URL）即被静默启用分批。故仅当用户显式填写有效 N/M（或新建步骤接受预填默认值）时才落字段。
 
 ### 决策4: UI 布局与复用
 `iterate_interval_group` 容器内追加两行，复用同一 `form-group`/`label`/`input` 样式：
-- 「每组连续点击数（个）」→ `#step-iterate-batch-size`，默认 10
-- 「组间休息（秒）」→ `#step-iterate-batch-interval`，默认 60
+- 「每组连续点击数（个，可选填）」→ `#step-iterate-batch-size`，placeholder 10
+- 「组间休息（秒，可选填）」→ `#step-iterate-batch-interval`，placeholder 60
 
-沿用既有交互：`addStep()` 清空新字段；`editStep(i)` 回填（`step.iterate_batch_size || 10`）；表单 submit 读取（`parseInt(...) || 默认`）；`renderSteps()` 卡片标记追加 `分批N/休息Ms`。
+沿用既有交互：`addStep()` 预填 10/60（新建默认分批）；`editStep(i)` 对已含字段步骤回填值、对无字段步骤留空（`step.iterate_batch_size || ''`）；表单 submit 仅当 `iterate_all` 且 N/M 均有效正整数时写入字段（`batchValid`），否则步骤对象不含批次字段；`renderSteps()` 卡片标记仅当 `iterate_all` 且字段有效时追加 `分批N/休息Ms`。
 
 ### 决策5: 日志可观测性
 沿用上一 change 决策5 的 RendererTransport 通道，主进程 `logger.info` 自动上屏。组间休息触发时输出：`轮询: 已连续点击 N 个，组间休息 M 秒后继续...`；若分批未启用（字段无效）但流程正常运行，不加额外日志，避免噪声。
