@@ -430,6 +430,11 @@ function setupIpc() {
                     if (step.iterate_all) {
                         // 轮询模式：依次点击所有匹配的可见元素，每个元素后处理确认框，间隔可配置（默认10秒）
                         const intervalSec = Number(step.iterate_interval) > 0 ? Number(step.iterate_interval) : 10;
+                        // 分批节奏：每组连续点击 N 个后额外休息 M 秒（仅字段有效时启用）
+                        const batchSize = Number(step.iterate_batch_size);
+                        const batchIntervalSec = Number(step.iterate_batch_interval);
+                        const batchEnabled = Number.isInteger(batchSize) && batchSize > 0
+                            && Number.isFinite(batchIntervalSec) && batchIntervalSec > 0;
                         logger.info(`[Execute Task] 轮询点击按钮: ${buttonSelectors.join(', ')}`);
                         for (const selector of buttonSelectors) {
                             // 先统计该选择器的可见元素总数
@@ -515,6 +520,11 @@ function setupIpc() {
                                 if (result.remaining > 0 && intervalSec > 0) {
                                     logger.info(`[Execute Task] 轮询: 等待 ${intervalSec} 秒后点击下一个...`);
                                     await new Promise(resolve => setTimeout(resolve, intervalSec * 1000));
+                                }
+                                // 满一组且仍有剩余：先完成元素间隔等待，再额外组间休息
+                                if (batchEnabled && result.remaining > 0 && clickedCount % batchSize === 0) {
+                                    logger.info(`[Execute Task] 轮询: 已连续点击 ${batchSize} 个，组间休息 ${batchIntervalSec} 秒后继续...`);
+                                    await new Promise(resolve => setTimeout(resolve, batchIntervalSec * 1000));
                                 }
                             }
                         }
