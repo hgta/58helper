@@ -156,7 +156,9 @@ class TabManager {
             if (!wc.isDestroyed()) {
                 this._send('browser-url-changed', wc.getURL());
                 this._send('browser-title-changed', wc.getTitle());
-                wc.getZoomFactor().then((zoom) => this._send('zoom-changed', zoom)).catch(() => {});
+                // getZoomFactor 返回同步数值（不是 Promise），不能 .then()
+                const zoom = wc.getZoomFactor();
+                this._send('zoom-changed', zoom);
             }
         }
         this._broadcast();
