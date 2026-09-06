@@ -118,6 +118,74 @@
         .win-btn.minimize { background: #ffbd2e; }
         .win-btn.maximize { background: #27ca40; }
         
+        /* 标签栏 */
+        .tabbar {
+            position: fixed;
+            top: 42px;
+            left: 280px;
+            right: 0;
+            height: 34px;
+            background: #1f1f38;
+            display: flex;
+            align-items: flex-end;
+            padding: 0 8px;
+            gap: 4px;
+            overflow-x: auto;
+            overflow-y: hidden;
+            border-bottom: 1px solid #333;
+            -webkit-app-region: drag;
+            z-index: 99;
+        }
+        
+        .tabbar::-webkit-scrollbar { height: 0; }
+        
+        .tab-item {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            max-width: 200px;
+            min-width: 110px;
+            height: 30px;
+            padding: 0 8px 0 10px;
+            border-radius: 6px 6px 0 0;
+            background: #1a1a2e;
+            color: #999;
+            font-size: 12px;
+            cursor: pointer;
+            -webkit-app-region: no-drag;
+            white-space: nowrap;
+            overflow: hidden;
+            flex-shrink: 0;
+            transition: background 0.15s, color 0.15s;
+        }
+        
+        .tab-item:hover { color: #ccc; }
+        
+        .tab-item.active {
+            background: #252542;
+            color: #fff;
+            box-shadow: inset 0 2px 0 #667eea;
+        }
+        
+        .tab-title {
+            flex: 1;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        
+        .tab-close {
+            background: none;
+            border: none;
+            color: #888;
+            cursor: pointer;
+            font-size: 15px;
+            padding: 0 2px;
+            line-height: 1;
+            flex-shrink: 0;
+        }
+        
+        .tab-close:hover { color: #f45c43; }
+        
         /* 侧边栏 */
         .sidebar {
             position: fixed;
@@ -634,6 +702,9 @@
         </div>
     </div>
     
+    <!-- 标签栏 -->
+    <div class="tabbar" id="tabbar"></div>
+    
     <!-- 侧边栏 -->
     <div class="sidebar">
         <div class="sidebar-header">
@@ -756,6 +827,10 @@
                     <input type="number" id="step-iterate-batch-size" placeholder="10" min="1">
                     <label>组间休息（秒，可选填）</label>
                     <input type="number" id="step-iterate-batch-interval" placeholder="60" min="1">
+                    <label style="display: flex; align-items: center; gap: 6px; margin-top: 8px; font-size: 12px; color: #ccc; cursor: pointer;">
+                        <input type="checkbox" id="step-iterate-open-tabs">
+                        每个元素在新标签页中执行后续步骤
+                    </label>
                 </div>
                 <div class="form-group">
                     <label>确认框按钮（每行一个，可选）</label>
@@ -781,6 +856,7 @@
             loadTasks();
             loadStats();
             setupEventListeners();
+            initTabs();
             addLog('应用已启动', 'info');
         });
         
@@ -932,6 +1008,47 @@
                     addLog(entry.message, entry.level === 'error' ? 'error' : entry.level === 'warn' ? 'warning' : 'info');
                 }
             });
+
+            // 标签栏：主进程推送 tab 列表变化
+            ipcRenderer.on('tabs-changed', (event, data) => {
+                renderTabs(data.tabs || [], data.activeId);
+            });
+        }
+
+        // ===== 标签栏 =====
+        function escapeHtml(s) {
+            return String(s || '').replace(/[&<>"']/g, c => ({
+                '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+            }[c]));
+        }
+
+        // 初始加载标签列表（主进程可能在渲染层就绪前已创建主标签页）
+        async function initTabs() {
+            try {
+                const result = await ipcRenderer.invoke('tab-get-all');
+                if (result.success) {
+                    renderTabs(result.tabs || [], result.activeId);
+                }
+            } catch (e) {}
+        }
+
+        function renderTabs(tabs, activeId) {
+            const bar = document.getElementById('tabbar');
+            bar.innerHTML = tabs.map(t => `
+                <div class="tab-item ${t.id === activeId ? 'active' : ''}" onclick="activateTab('${t.id}')" title="${escapeHtml(t.title)}">
+                    <span>${t.kind === 'main' ? '🏠' : '📄'}</span>
+                    <span class="tab-title">${escapeHtml(t.title || '新标签页')}</span>
+                    ${t.closable ? `<button class="tab-close" title="关闭标签页" onclick="event.stopPropagation(); closeTab('${t.id}')">&times;</button>` : ''}
+                </div>
+            `).join('');
+        }
+
+        function activateTab(id) {
+            ipcRenderer.invoke('tab-activate', id);
+        }
+
+        function closeTab(id) {
+            ipcRenderer.invoke('tab-close', id);
         }
         
         // 缩放功能
@@ -1153,6 +1270,7 @@
                         ${step.button_selectors?.length ? '按钮: ' + step.button_selectors.join(', ') : ''}
                         ${step.confirm_selectors?.length ? ' | 确认: ' + step.confirm_selectors.join(', ') : ''}
                         ${step.iterate_all ? ` | 🔁 轮询所有(间隔${step.iterate_interval || 10}s${step.iterate_batch_size ? `, 分批${step.iterate_batch_size}/休息${step.iterate_batch_interval || 60}s` : ''})` : ''}
+                        ${step.iterate_open_tabs ? ' | 🔀 新标签页' : ''}
                         ${!step.button_selectors?.length && !step.confirm_selectors?.length ? '无按钮操作' : ''}
                     </div>
                 </div>
@@ -1169,6 +1287,8 @@
             document.getElementById('step-iterate-interval').value = 10;
             document.getElementById('step-iterate-batch-size').value = 10;
             document.getElementById('step-iterate-batch-interval').value = 60;
+            // 新建步骤默认勾选裂变（旧步骤编辑时按实际字段回填，不静默启用）
+            document.getElementById('step-iterate-open-tabs').checked = true;
             document.getElementById('iterate-interval-group').style.display = 'none';
             document.getElementById('step-modal-title').textContent = '添加步骤';
             document.getElementById('step-modal').classList.add('show');
@@ -1186,6 +1306,8 @@
             // 分批字段可选填：旧步骤无字段时留空（placeholder 显示默认），填值才启用分批
             document.getElementById('step-iterate-batch-size').value = step.iterate_batch_size || '';
             document.getElementById('step-iterate-batch-interval').value = step.iterate_batch_interval || '';
+            // 裂变开关：仅显式为 true 时勾选（旧步骤无字段 → 不勾选，保持原有行为）
+            document.getElementById('step-iterate-open-tabs').checked = step.iterate_open_tabs === true;
             document.getElementById('iterate-interval-group').style.display = step.iterate_all ? 'block' : 'none';
             document.getElementById('step-modal-title').textContent = '编辑步骤';
             document.getElementById('step-modal').classList.add('show');
@@ -1222,6 +1344,11 @@
             if (batchValid) {
                 step.iterate_batch_size = batchSize;
                 step.iterate_batch_interval = batchInterval;
+            }
+            // 裂变开关：仅勾选时写入字段（未勾选不带字段，保持原有原地轮询行为）
+            const openTabs = iterate_all && document.getElementById('step-iterate-open-tabs').checked;
+            if (openTabs) {
+                step.iterate_open_tabs = true;
             }
             
             if (editingStepIndex === -1) {
