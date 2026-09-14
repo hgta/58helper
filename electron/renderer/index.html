@@ -226,12 +226,32 @@
         /* 任务执行计时器 */
         .timer-bar {
             display: flex;
-            align-items: center;
-            gap: 8px;
+            flex-direction: column;
+            gap: 6px;
             padding: 10px 14px;
             background: linear-gradient(135deg, #1e1e35, #252542);
             border-bottom: 1px solid #333;
             border-top: 1px solid #333;
+        }
+        
+        .timer-row {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            min-width: 0;
+        }
+        
+        .timer-value.eta {
+            color: #ffd200;
+            font-size: 16px;
+            min-width: 76px;
+        }
+        
+        .timer-value.eta.calculating {
+            color: #888;
+            font-size: 12px;
+            font-weight: 600;
+            font-variant-numeric: normal;
         }
         
         .timer-icon {
@@ -332,9 +352,55 @@
             color: white;
         }
         
+        .btn-warning {
+            background: linear-gradient(135deg, #f7971e 0%, #ffd200 100%);
+            color: #4a3200;
+        }
+        
         .btn-secondary {
             background: #3a3a5c;
             color: #fff;
+        }
+        
+        .btn:disabled,
+        .btn[disabled] {
+            opacity: 0.45;
+            cursor: not-allowed;
+            transform: none;
+        }
+        
+        /* 任务状态徽标 */
+        .task-status-badge {
+            font-size: 10px;
+            font-weight: 700;
+            padding: 2px 8px;
+            border-radius: 10px;
+            white-space: nowrap;
+            display: none;
+        }
+        
+        .task-status-badge.show {
+            display: inline-block;
+        }
+        
+        .task-status-badge.running {
+            background: rgba(56, 239, 125, 0.18);
+            color: #38ef7d;
+        }
+        
+        .task-status-badge.paused {
+            background: rgba(255, 210, 0, 0.18);
+            color: #ffd200;
+        }
+        
+        .task-status-badge.stopping {
+            background: rgba(244, 92, 67, 0.18);
+            color: #f45c43;
+        }
+        
+        .timer-value.paused {
+            color: #ffd200;
+            animation: none;
         }
         
         /* 任务列表 */
@@ -731,17 +797,27 @@
             </div>
         </div>
         
-        <!-- 当前任务执行耗时计时器 -->
+        <!-- 当前任务执行耗时计时器 + 预计剩余时间 -->
         <div class="timer-bar">
-            <span class="timer-icon">⏱️</span>
-            <span class="timer-label">当前任务已执行</span>
-            <span class="timer-value" id="task-timer">00:00:00</span>
+            <div class="timer-row">
+                <span class="timer-icon">⏱️</span>
+                <span class="timer-label">已执行</span>
+                <span class="task-status-badge" id="task-status-badge"></span>
+                <span class="timer-value" id="task-timer">00:00:00</span>
+            </div>
+            <div class="timer-row" id="task-eta-row" style="display: none;">
+                <span class="timer-icon">⏳</span>
+                <span class="timer-label" id="task-eta-label">预计剩余</span>
+                <span class="timer-value eta" id="task-eta">--:--:--</span>
+            </div>
         </div>
         
         <div class="control-section">
             <h3>⚡ 快捷操作</h3>
             <div class="control-btns">
                 <button class="btn btn-success" id="btn-execute-all">▶ 执行全部</button>
+                <button class="btn btn-warning" id="btn-pause-task" style="display: none;">⏸ 暂停</button>
+                <button class="btn btn-danger" id="btn-stop-task" style="display: none;">⏹ 停止</button>
                 <button class="btn btn-primary" id="btn-add-task">+ 添加任务</button>
             </div>
         </div>
@@ -763,7 +839,11 @@
         <div class="log-section">
             <div class="log-header">
                 <h4>📜 执行日志</h4>
-                <button class="btn btn-secondary btn-small" id="btn-clear-log">清空</button>
+                <div style="display: flex; gap: 6px;">
+                    <button class="btn btn-secondary btn-small" id="btn-export-log" title="导出日志文件，便于分享排查">导出日志</button>
+                    <button class="btn btn-secondary btn-small" id="btn-open-log-dir" title="打开日志所在文件夹">打开目录</button>
+                    <button class="btn btn-secondary btn-small" id="btn-clear-log">清空</button>
+                </div>
             </div>
             <div class="log-container" id="log-container"></div>
         </div>
@@ -850,6 +930,9 @@
         let currentZoom = 1;
         let currentSteps = [];  // 当前编辑的步骤列表
         let editingStepIndex = -1;  // 当前编辑的步骤索引，-1表示新增
+        let taskStatus = 'idle';   // idle | running | paused | stopping
+        let taskProgress = { done: 0, total: 0, label: '' };  // 主进程上报的工作进度
+        let taskDurations = {};    // { [taskId]: { last, avg, count } } 历史耗时
         
         // 初始化
         document.addEventListener('DOMContentLoaded', async () => {
@@ -857,8 +940,20 @@
             loadStats();
             setupEventListeners();
             initTabs();
+            initTaskStatus();
+            loadTaskDurations();
             addLog('应用已启动', 'info');
         });
+
+        // 与主进程同步一次任务控制状态（例如界面刷新时任务仍在跑）
+        async function initTaskStatus() {
+            try {
+                const r = await ipcRenderer.invoke('task-control-state');
+                if (r && r.success && r.state) {
+                    applyTaskStatus(r.state.status, r.state.progress);
+                }
+            } catch (e) {}
+        }
         
         // 设置事件监听
         function setupEventListeners() {
@@ -907,6 +1002,32 @@
             
             // 任务控制
             document.getElementById('btn-execute-all').addEventListener('click', executeAllTasks);
+            // 暂停 / 继续
+            document.getElementById('btn-pause-task').addEventListener('click', async () => {
+                const btn = document.getElementById('btn-pause-task');
+                if (taskStatus === 'paused') {
+                    btn.disabled = true;
+                    try {
+                        const r = await ipcRenderer.invoke('task-resume');
+                        addLog(r.success ? '▶ 任务已继续' : '继续失败：当前没有暂停的任务', r.success ? 'info' : 'warning');
+                    } finally {
+                        btn.disabled = false;
+                    }
+                } else if (taskStatus === 'running') {
+                    btn.disabled = true;
+                    try {
+                        const r = await ipcRenderer.invoke('task-pause');
+                        addLog(r.success ? '⏸ 任务已暂停（点「继续」恢复）' : '暂停失败：当前没有运行中的任务', r.success ? 'warning' : 'warning');
+                    } finally {
+                        btn.disabled = false;
+                    }
+                }
+            });
+            // 停止
+            document.getElementById('btn-stop-task').addEventListener('click', async () => {
+                if (!confirm('确定停止当前任务？正在执行的任务会被中断。')) return;
+                await ipcRenderer.invoke('task-stop');
+            });
             document.getElementById('btn-add-task').addEventListener('click', () => {
                 // 重置表单为添加模式
                 document.getElementById('task-id').value = '';
@@ -934,6 +1055,35 @@
             });
             document.getElementById('btn-clear-log').addEventListener('click', () => {
                 document.getElementById('log-container').innerHTML = '';
+            });
+            // 导出日志到文件
+            document.getElementById('btn-export-log').addEventListener('click', async () => {
+                const btn = document.getElementById('btn-export-log');
+                btn.disabled = true;
+                try {
+                    const uiLogText = document.getElementById('log-container').innerText || '';
+                    const result = await ipcRenderer.invoke('logs-export', uiLogText);
+                    if (result.success) {
+                        addLog(`日志已导出: ${result.path}`, 'success');
+                    } else if (result.canceled) {
+                        // 用户取消，不提示
+                    } else {
+                        addLog(`导出日志失败: ${result.error}`, 'error');
+                    }
+                } catch (e) {
+                    addLog(`导出日志失败: ${e.message}`, 'error');
+                } finally {
+                    btn.disabled = false;
+                }
+            });
+            // 打开日志目录
+            document.getElementById('btn-open-log-dir').addEventListener('click', async () => {
+                const result = await ipcRenderer.invoke('logs-open-dir');
+                if (result.success) {
+                    addLog(`日志目录: ${result.path}`, 'info');
+                } else {
+                    addLog(`打开日志目录失败: ${result.error}`, 'error');
+                }
             });
             
             // 表单提交
@@ -1013,6 +1163,18 @@
             ipcRenderer.on('tabs-changed', (event, data) => {
                 renderTabs(data.tabs || [], data.activeId);
             });
+
+            // 任务控制状态（运行/暂停/停止）+ 执行进度 实时同步到 UI
+            ipcRenderer.on('task-status', (event, state) => {
+                applyTaskStatus(state && state.status, state && state.progress);
+            });
+
+            // 主进程推送任务结束（含被用户停止）
+            ipcRenderer.on('task-completed', (event, data) => {
+                if (data && data.aborted) {
+                    addLog('⏹ 任务已停止', 'warning');
+                }
+            });
         }
 
         // ===== 标签栏 =====
@@ -1073,6 +1235,41 @@
             }
         }
         
+        // 毫秒 → 紧凑时长（12:34 / 1:02:33），用于任务卡片
+        function formatShort(ms) {
+            const totalSec = Math.max(0, Math.round((Number(ms) || 0) / 1000));
+            if (!totalSec) return '';
+            const h = Math.floor(totalSec / 3600);
+            const m = Math.floor((totalSec % 3600) / 60);
+            const s = totalSec % 60;
+            if (h > 0) return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+            return `${m}:${String(s).padStart(2, '0')}`;
+        }
+        
+        // 任务卡片上的耗时提示（上次 / 平均）
+        function durationHint(taskId) {
+            const d = taskDurations[String(taskId)];
+            if (!d) return '';
+            const last = Number(d.last) || 0;
+            const avg = Number(d.avg) || 0;
+            if (!last && !avg) return '';
+            const parts = [];
+            if (last) parts.push(`上次 ${formatShort(last)}`);
+            if (avg && d.count > 1) parts.push(`平均 ${formatShort(avg)}`);
+            return parts.length ? ` · 耗时 ${parts.join(' / ')}` : '';
+        }
+        
+        // 拉取历史耗时统计
+        async function loadTaskDurations(rerender = true) {
+            try {
+                const r = await ipcRenderer.invoke('task-durations-get');
+                if (r && r.success) {
+                    taskDurations = r.data || {};
+                    if (rerender) renderTasks();
+                }
+            } catch (e) { /* 忽略：估算信息拿不到不影响主流程 */ }
+        }
+        
         // 渲染任务列表
         function renderTasks() {
             const container = document.getElementById('task-list');
@@ -1091,7 +1288,7 @@
                         <span class="task-priority">P${task.priority || i + 1}</span>
                         <div class="task-name">${task.name || `任务 ${i + 1}`}</div>
                     </div>
-                    <div class="task-selectors">${task.steps?.length || 0} 个步骤</div>
+                    <div class="task-selectors">${task.steps?.length || 0} 个步骤${durationHint(task.id)}</div>
                     <div class="task-actions">
                         <button class="btn btn-success btn-small" onclick="executeTask(${task.id})">执行</button>
                         <button class="btn btn-primary btn-small" onclick="editTask(${task.id})">编辑</button>
@@ -1122,6 +1319,8 @@
         let taskTimerStart = null;
         let taskTimerInterval = null;
         let batchRunning = false; // 批量执行时由外层统一管理计时器，避免单任务启停干扰
+        let taskElapsedOffset = 0; // 已扣除的暂停时长（毫秒）
+        let taskPausedAt = null;   // 进入暂停的时刻
 
         function formatElapsed(ms) {
             const totalSec = Math.floor(ms / 1000);
@@ -1131,19 +1330,95 @@
             return `${h}:${m}:${s}`;
         }
 
+        // 当前任务的有效耗时（不含暂停时间）
+        function getTaskElapsedMs() {
+            if (taskTimerStart === null) return 0;
+            let elapsed = Date.now() - taskTimerStart - taskElapsedOffset;
+            if (taskPausedAt !== null) {
+                elapsed -= (Date.now() - taskPausedAt); // 暂停期间不计时
+            }
+            return Math.max(0, elapsed);
+        }
+
         function updateTaskTimer() {
             const el = document.getElementById('task-timer');
-            if (!el) return;
-            if (taskTimerStart === null) {
-                el.textContent = '00:00:00';
+            if (el) {
+                el.textContent = taskTimerStart === null ? '00:00:00' : formatElapsed(getTaskElapsedMs());
+            }
+            updateTaskEta();
+        }
+
+        /**
+         * 预计剩余时间：按「已完成单元 / 总单元」的实测速率外推。
+         * 单元由主进程上报（一个元素或一个普通步骤算一个），随执行不断校正，越跑越准。
+         */
+        function computeEtaMs() {
+            const { done, total } = taskProgress;
+            if (!total || done <= 0) return null;      // 还没完成任何单元，无法估速率
+            if (done >= total) return 0;               // 单元已跑完，只剩收尾
+            const elapsed = getTaskElapsedMs();
+            if (elapsed <= 0) return null;
+            return (elapsed / done) * (total - done);
+        }
+
+        function updateTaskEta() {
+            const row = document.getElementById('task-eta-row');
+            const labelEl = document.getElementById('task-eta-label');
+            const valueEl = document.getElementById('task-eta');
+            if (!row || !labelEl || !valueEl) return;
+
+            const active = taskTimerStart !== null && taskStatus !== 'idle';
+            if (!active) {
+                row.style.display = 'none';
                 return;
             }
-            el.textContent = formatElapsed(Date.now() - taskTimerStart);
+            row.style.display = '';
+
+            const { done, total, label } = taskProgress;
+            const eta = computeEtaMs();
+
+            // 进度行改成展示「当前阶段」，跟主进程日志里的格式一致；
+            // 全局进度 done/total 放到 hover 提示里，避免数字互相打架
+            if (label) {
+                labelEl.textContent = `预计剩余 · ${label}`;
+            } else {
+                const progText = total > 0 ? ` ${done}/${total}` : '';
+                labelEl.textContent = `预计剩余${progText}`;
+            }
+
+            const tooltipParts = [];
+            if (total > 0) tooltipParts.push(`总进度 ${done}/${total}`);
+
+            if (eta === null) {
+                valueEl.textContent = '计算中…';
+                valueEl.classList.add('calculating');
+                row.title = total > 0
+                    ? `已完成 ${done}/${total}，还需采集几个样本才能估算`
+                    : '等待任务上报进度…';
+                return;
+            }
+
+            valueEl.classList.remove('calculating');
+            if (eta <= 0) {
+                valueEl.textContent = '即将完成';
+                valueEl.classList.add('calculating');
+                row.title = tooltipParts.length ? tooltipParts.join(' · ') : '剩余工作单元已全部完成';
+            } else {
+                valueEl.textContent = formatElapsed(eta);
+                const finishAt = new Date(Date.now() + eta);
+                const hh = String(finishAt.getHours()).padStart(2, '0');
+                const mi = String(finishAt.getMinutes()).padStart(2, '0');
+                const head = `按当前速度，预计 ${hh}:${mi} 完成`;
+                const tail = '；暂停时不计时';
+                row.title = [head, ...tooltipParts, tail].filter(Boolean).join(' · ');
+            }
         }
 
         function startTaskTimer() {
             if (taskTimerInterval) return; // 已在运行则不重置
             taskTimerStart = Date.now();
+            taskElapsedOffset = 0;
+            taskPausedAt = null;
             updateTaskTimer();
             taskTimerInterval = setInterval(updateTaskTimer, 1000);
             const el = document.getElementById('task-timer');
@@ -1156,69 +1431,167 @@
                 taskTimerInterval = null;
             }
             updateTaskTimer(); // 定格最终耗时
+            taskPausedAt = null;
             const el = document.getElementById('task-timer');
-            if (el) el.classList.remove('active');
+            if (el) {
+                el.classList.remove('active');
+                el.classList.remove('paused');
+            }
         }
 
-        // 执行单个任务
-        async function executeTask(taskId) {
+        // ===== 任务控制（暂停 / 继续 / 停止） =====
+        const TASK_STATUS_TEXT = { running: '运行中', paused: '已暂停', stopping: '正在停止' };
+
+        function applyTaskStatus(status, progress) {
+            if (!status) return;
+            const prev = taskStatus;
+            taskStatus = status;
+
+            if (progress) {
+                taskProgress = {
+                    done: Number(progress.done) || 0,
+                    total: Number(progress.total) || 0,
+                    label: progress.label || ''
+                };
+            }
+            // 任务结束后清空进度，避免下次执行前残留旧数据
+            if (status === 'idle') {
+                taskProgress = { done: 0, total: 0, label: '' };
+            }
+
+            const active = status === 'running' || status === 'paused' || status === 'stopping';
+            const badge = document.getElementById('task-status-badge');
+            const pauseBtn = document.getElementById('btn-pause-task');
+            const stopBtn = document.getElementById('btn-stop-task');
+            const executeBtn = document.getElementById('btn-execute-all');
+            const batchBtn = document.getElementById('btn-batch-execute');
+            const timerEl = document.getElementById('task-timer');
+
+            if (badge) {
+                if (active) {
+                    badge.textContent = TASK_STATUS_TEXT[status] || status;
+                    badge.className = `task-status-badge show ${status}`;
+                } else {
+                    badge.className = 'task-status-badge';
+                }
+            }
+
+            if (pauseBtn) {
+                pauseBtn.style.display = active ? '' : 'none';
+                pauseBtn.textContent = status === 'paused' ? '▶ 继续' : '⏸ 暂停';
+                pauseBtn.disabled = status === 'stopping';
+            }
+            if (stopBtn) {
+                stopBtn.style.display = active ? '' : 'none';
+                stopBtn.disabled = status === 'stopping';
+            }
+            if (executeBtn) executeBtn.disabled = active;
+            if (batchBtn) batchBtn.disabled = active;
+
+            // 计时器样式：暂停时变黄并停止脉冲
+            if (timerEl) {
+                if (status === 'paused') {
+                    timerEl.classList.remove('active');
+                    timerEl.classList.add('paused');
+                } else if (status === 'running') {
+                    timerEl.classList.remove('paused');
+                    if (taskTimerStart !== null) timerEl.classList.add('active');
+                } else if (!active) {
+                    timerEl.classList.remove('active');
+                    timerEl.classList.remove('paused');
+                }
+            }
+
+            // 暂停时长计入扣除
+            if (status === 'paused' && prev !== 'paused') {
+                taskPausedAt = Date.now();
+                updateTaskTimer();
+            } else if (prev === 'paused' && status !== 'paused') {
+                if (taskPausedAt !== null) {
+                    taskElapsedOffset += Date.now() - taskPausedAt;
+                    taskPausedAt = null;
+                }
+                updateTaskTimer();
+            }
+
+            // 进度变化时立即刷新「预计剩余」
+            updateTaskEta();
+        }
+
+        // 执行单个任务（返回结果对象，便于批量循环判断是否被停止）
+        // internal=true 表示由批量循环调用，跳过「已有任务在执行中」的前置校验
+        async function executeTask(taskId, internal = false) {
+            if (!internal && taskStatus !== 'idle') {
+                addLog('已有任务在执行中，如需重新开始请先点「停止」', 'warning');
+                return { success: false, error: '已有任务在执行中' };
+            }
             if (!batchRunning) startTaskTimer();
             const taskEl = document.getElementById(`task-${taskId}`);
             if (taskEl) taskEl.classList.add('executing');
-            
+
             addLog('正在执行任务...', 'info');
-            
+
+            let result = { success: false, error: '未知错误' };
             try {
-                const result = await ipcRenderer.invoke('execute-task', taskId);
-                
+                result = await ipcRenderer.invoke('execute-task', taskId);
+
                 if (taskEl) {
                     taskEl.classList.remove('executing');
                     if (result.success) {
                         taskEl.classList.add('completed');
                         addLog('✅ 任务执行成功', 'success');
+                    } else if (result.aborted) {
+                        // 停止提示由 task-completed 事件统一输出，这里不重复
                     } else {
                         addLog('❌ 执行失败: ' + result.error, 'error');
                     }
                 }
             } catch (err) {
                 addLog('❌ 执行异常: ' + err.message, 'error');
-                if (taskEl) {
-                    taskEl.classList.remove('executing');
-                }
+                if (taskEl) taskEl.classList.remove('executing');
+                result = { success: false, error: err.message };
             }
-            
+
             loadStats();
-            if (!batchRunning) stopTaskTimer();
+            if (!batchRunning) {
+                stopTaskTimer();
+                // 刷新「上次耗时」（不立即重绘任务列表，保留刚打上的完成高亮）
+                loadTaskDurations(false);
+            }
+            return result;
         }
-        
+
         // 执行所有任务
         async function executeAllTasks() {
-            if (isExecuting) {
+            if (isExecuting || taskStatus !== 'idle') {
                 addLog('已有任务在执行中', 'warning');
                 return;
             }
-            
+
             const enabledTasks = tasks.filter(t => t.enabled);
             if (enabledTasks.length === 0) {
                 addLog('没有启用的任务', 'warning');
                 return;
             }
-            
+
             isExecuting = true;
             batchRunning = true;
             startTaskTimer();
             addLog(`开始执行 ${enabledTasks.length} 个任务`, 'info');
-            
+
+            let aborted = false;
             for (let i = 0; i < enabledTasks.length; i++) {
                 addLog(`[${i + 1}/${enabledTasks.length}] 执行: ${enabledTasks[i].name || '未命名任务'}`, 'info');
-                await executeTask(enabledTasks[i].id);
+                const result = await executeTask(enabledTasks[i].id, true);
+                if (result && result.aborted) { aborted = true; break; }
                 await new Promise(r => setTimeout(r, 2000));
             }
-            
+
             isExecuting = false;
             batchRunning = false;
             stopTaskTimer();
-            addLog('全部任务执行完成', 'success');
+            loadTaskDurations();
+            addLog(aborted ? '批量执行已停止' : '全部任务执行完成', aborted ? 'warning' : 'success');
         }
         
         // 切换任务状态
@@ -1402,34 +1775,37 @@
         
         // 批量执行选中的任务
         async function executeSelectedTasks() {
-            if (isExecuting) {
+            if (isExecuting || taskStatus !== 'idle') {
                 addLog('已有任务在执行中', 'warning');
                 return;
             }
-            
+
             if (selectedTasks.length === 0) {
                 addLog('请先选择要执行的任务', 'warning');
                 return;
             }
-            
+
             isExecuting = true;
             batchRunning = true;
             startTaskTimer();
             addLog(`开始批量执行 ${selectedTasks.length} 个任务`, 'info');
-            
+
+            let aborted = false;
             for (let i = 0; i < selectedTasks.length; i++) {
                 const task = tasks.find(t => t.id === selectedTasks[i]);
                 addLog(`[${i + 1}/${selectedTasks.length}] 执行: ${task.name || task.url}`, 'info');
-                await executeTask(selectedTasks[i]);
+                const result = await executeTask(selectedTasks[i], true);
+                if (result && result.aborted) { aborted = true; break; }
                 await new Promise(r => setTimeout(r, 2000));
             }
-            
+
             isExecuting = false;
             batchRunning = false;
             stopTaskTimer();
             selectedTasks = [];
             renderTasks();
-            addLog('批量执行完成', 'success');
+            loadTaskDurations();
+            addLog(aborted ? '批量执行已停止' : '批量执行完成', aborted ? 'warning' : 'success');
         }
         
         // 删除任务

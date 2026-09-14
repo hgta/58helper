@@ -78,6 +78,7 @@ FOR k = 0 .. V-1:
             主匹配: text 完全相等 且 href 相等(有href时)
             兜底:   可见元素中第 k 个未标记项(按索引)
           匹配失败 → 记日志跳过该元素(continue)
+          点击目标下钻: <a>(自身/祖先/后代) → 最深文本叶子 → 元素自身
           click → 跳转发生在临时tab内
   CONFIRM 临时tab内 handleConfirmBox(本步 confirm_selectors)
   SUBSTEP 临时tab内顺序执行 steps[k+1..N]:
@@ -92,6 +93,16 @@ CLOSE  TabManager.closeTempTab() → 激活主tab → 轮询步骤结束
 ### 3.1 关键实现点
 
 **元素身份跨加载漂移**：裂变模式下每次迭代都重新加载列表页，DOM 顺序可能变化。SCAN 阶段在主 tab 抓取描述符快照（去空白 text、href、aria-label、title、tagName、可见序号），CLICK 阶段优先按 `text+href` 精确匹配，失败退化为「第 k 个可见未标记元素」。不匹配则记 `logger.warn` 并跳过，不中断整个任务。
+
+**点击目标下钻（可点击元素识别）**：匹配到目标元素后 MUST NOT 直接对该元素调用 `click()`——列表里的「按钮」常常只是布局容器（如 uni-app 的 `<uni-view class="loginBox">`），真正的 `@click` handler 挂在内部更深节点（`<uni-text>` / `<span>`）上；对容器派发点击事件不会冒泡触发内部（其实是同层/更内层）的 handler，表现为「日志显示已点击、页面毫无反应」。点击目标按以下优先级下钻：
+1. 元素自身或最近祖先 `<a>`（href 导航场景，保持原有行为）
+2. 元素内部第一个 `<a>`
+3. 子树中「无 element 子节点且文本等于描述符 text」的最深叶子元素（uni-app 等事件代理场景，事件冒泡触发真正的 handler）
+4. 兜底：元素自身
+
+选择依据与结果写入日志（`clickReason`：`self-anchor` / `ancestor-anchor` / `descendant-anchor` / `deepest-text-match` / `self`），便于定位「日志显示已点击但页面无反应」。用户侧的 `button_selectors` 无需为此调整——选择器继续指向列表项/按钮容器即可，下钻由系统自动完成。
+
+**点击生效校验**：点击后同标签页内跳转超时未发生时记 `logger.warn`（含扫描序号、实际点击序号、命中标签与 `clickReason`），仅作诊断，不中断流程（部分场景为 AJAX 切换账号、不改变 URL，属正常）。
 
 **主 tab 标记**：主 tab 全程不点击、不跳转。MARK 仅 `dataset.iterateDone='1'` + 插入描边样式（`outline: 2px solid #4caf50`），供用户目视进度；主 tab 若被用户手动刷新，标记丢失但执行不受影响（快照在主进程内存中）。
 
