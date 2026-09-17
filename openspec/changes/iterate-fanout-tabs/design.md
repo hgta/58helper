@@ -102,6 +102,8 @@ CLOSE  TabManager.closeTempTab() → 激活主tab → 轮询步骤结束
 
 选择依据与结果写入日志（`clickReason`：`self-anchor` / `ancestor-anchor` / `descendant-anchor` / `deepest-text-match` / `self`），便于定位「日志显示已点击但页面无反应」。用户侧的 `button_selectors` 无需为此调整——选择器继续指向列表项/按钮容器即可，下钻由系统自动完成。
 
+**全局唯一计数（跨选择器合并分批）**：当 `iterate_global_unique_count === true` 时，系统把所有 `button_selectors` 匹配到的可见元素合并成一个全局队列，统一按 `iterate_global_batch_size` / `iterate_global_batch_interval` 执行分批休息；不再按每个选择器独立计数。描述符需额外携带 `selector` / `selectorIndex` / `globalIndex`，以便临时 tab 重新加载后仍能定位到正确元素，并在主 tab 标记对应全局序号的元素。
+
 **点击生效校验**：点击后同标签页内跳转超时未发生时记 `logger.warn`（含扫描序号、实际点击序号、命中标签与 `clickReason`），仅作诊断，不中断流程（部分场景为 AJAX 切换账号、不改变 URL，属正常）。
 
 **主 tab 标记**：主 tab 全程不点击、不跳转。MARK 仅 `dataset.iterateDone='1'` + 插入描边样式（`outline: 2px solid #4caf50`），供用户目视进度；主 tab 若被用户手动刷新，标记丢失但执行不受影响（快照在主进程内存中）。
@@ -123,6 +125,9 @@ CLOSE  TabManager.closeTempTab() → 激活主tab → 轮询步骤结束
   "iterate_interval": 10,
   "iterate_batch_size": 10,        // 上个 change 引入
   "iterate_batch_interval": 60,    // 上个 change 引入
+  "iterate_global_unique_count": false, // 本次新增, 可选布尔
+  "iterate_global_batch_size": 10,        // 本次新增, 全局模式必填
+  "iterate_global_batch_interval": 60,  // 本次新增, 全局模式必填
   "iterate_open_tabs": true        // 本次新增, 可选布尔
 }
 ```

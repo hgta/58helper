@@ -900,13 +900,27 @@
                         轮询页面所有相同元素
                     </label>
                 </div>
+                <div class="form-group" id="iterate-global-group" style="display: none;">
+                    <label>
+                        <input type="checkbox" id="step-iterate-global">
+                        全局唯一计数
+                    </label>
+                </div>
                 <div class="form-group" id="iterate-interval-group" style="display: none;">
                     <label>轮询间隔（秒）</label>
                     <input type="number" id="step-iterate-interval" value="10" min="1">
-                    <label>每组连续点击数（个，可选填）</label>
-                    <input type="number" id="step-iterate-batch-size" placeholder="10" min="1">
-                    <label>组间休息（秒，可选填）</label>
-                    <input type="number" id="step-iterate-batch-interval" placeholder="60" min="1">
+                    <div id="batch-local-group">
+                        <label>每组连续点击数（个，可选填）</label>
+                        <input type="number" id="step-iterate-batch-size" placeholder="10" min="1">
+                        <label>组间休息（秒，可选填）</label>
+                        <input type="number" id="step-iterate-batch-interval" placeholder="60" min="1">
+                    </div>
+                    <div id="batch-global-group" style="display: none;">
+                        <label>全局连续点击个数（个）</label>
+                        <input type="number" id="step-iterate-global-size" placeholder="10" min="1">
+                        <label>连续点击后休息时间（秒）</label>
+                        <input type="number" id="step-iterate-global-interval" placeholder="60" min="1">
+                    </div>
                     <label style="display: flex; align-items: center; gap: 6px; margin-top: 8px; font-size: 12px; color: #ccc; cursor: pointer;">
                         <input type="checkbox" id="step-iterate-open-tabs">
                         每个元素在新标签页中执行后续步骤
@@ -957,11 +971,29 @@
         
         // 设置事件监听
         function setupEventListeners() {
-            // 轮询勾选联动：勾选时显示间隔输入框
+            // 轮询勾选联动：勾选时显示间隔输入框和全局计数选项
             document.getElementById('step-iterate-all').addEventListener('change', (e) => {
                 document.getElementById('iterate-interval-group').style.display =
                     e.target.checked ? 'block' : 'none';
+                document.getElementById('iterate-global-group').style.display =
+                    e.target.checked ? 'block' : 'none';
+                if (!e.target.checked) {
+                    document.getElementById('step-iterate-global').checked = false;
+                }
+                updateBatchGroupVisibility();
             });
+
+            // 全局唯一计数勾选联动：切换局部分批 / 全局分批输入框
+            document.getElementById('step-iterate-global').addEventListener('change', updateBatchGroupVisibility);
+
+            function updateBatchGroupVisibility() {
+                const iterateAll = document.getElementById('step-iterate-all').checked;
+                const globalMode = iterateAll && document.getElementById('step-iterate-global').checked;
+                document.getElementById('batch-local-group').style.display =
+                    iterateAll && !globalMode ? 'block' : 'none';
+                document.getElementById('batch-global-group').style.display =
+                    globalMode ? 'block' : 'none';
+            }
             
             // 窗口控制
             document.getElementById('win-min').addEventListener('click', () => {
@@ -1642,7 +1674,7 @@
                     <div class="step-selectors">
                         ${step.button_selectors?.length ? '按钮: ' + step.button_selectors.join(', ') : ''}
                         ${step.confirm_selectors?.length ? ' | 确认: ' + step.confirm_selectors.join(', ') : ''}
-                        ${step.iterate_all ? ` | 🔁 轮询所有(间隔${step.iterate_interval || 10}s${step.iterate_batch_size ? `, 分批${step.iterate_batch_size}/休息${step.iterate_batch_interval || 60}s` : ''})` : ''}
+                        ${step.iterate_all ? ` | 🔁 轮询所有(间隔${step.iterate_interval || 10}s${step.iterate_global_unique_count ? (step.iterate_global_batch_size ? `, 全局${step.iterate_global_batch_size}/休息${step.iterate_global_batch_interval || 60}s` : '') : (step.iterate_batch_size ? `, 分批${step.iterate_batch_size}/休息${step.iterate_batch_interval || 60}s` : '')})` : ''}
                         ${step.iterate_open_tabs ? ' | 🔀 新标签页' : ''}
                         ${!step.button_selectors?.length && !step.confirm_selectors?.length ? '无按钮操作' : ''}
                     </div>
@@ -1657,12 +1689,17 @@
             document.getElementById('step-selectors').value = '';
             document.getElementById('step-confirm-selectors').value = '';
             document.getElementById('step-iterate-all').checked = false;
+            document.getElementById('step-iterate-global').checked = false;
             document.getElementById('step-iterate-interval').value = 10;
             document.getElementById('step-iterate-batch-size').value = 10;
             document.getElementById('step-iterate-batch-interval').value = 60;
+            document.getElementById('step-iterate-global-size').value = 10;
+            document.getElementById('step-iterate-global-interval').value = 60;
             // 新建步骤默认勾选裂变（旧步骤编辑时按实际字段回填，不静默启用）
             document.getElementById('step-iterate-open-tabs').checked = true;
             document.getElementById('iterate-interval-group').style.display = 'none';
+            document.getElementById('iterate-global-group').style.display = 'none';
+            updateBatchGroupVisibility();
             document.getElementById('step-modal-title').textContent = '添加步骤';
             document.getElementById('step-modal').classList.add('show');
         }
@@ -1675,13 +1712,18 @@
             document.getElementById('step-selectors').value = (step.button_selectors || []).join('\n');
             document.getElementById('step-confirm-selectors').value = (step.confirm_selectors || []).join('\n');
             document.getElementById('step-iterate-all').checked = !!step.iterate_all;
+            document.getElementById('step-iterate-global').checked = step.iterate_global_unique_count === true;
             document.getElementById('step-iterate-interval').value = step.iterate_interval || 10;
             // 分批字段可选填：旧步骤无字段时留空（placeholder 显示默认），填值才启用分批
             document.getElementById('step-iterate-batch-size').value = step.iterate_batch_size || '';
             document.getElementById('step-iterate-batch-interval').value = step.iterate_batch_interval || '';
+            document.getElementById('step-iterate-global-size').value = step.iterate_global_batch_size || '';
+            document.getElementById('step-iterate-global-interval').value = step.iterate_global_batch_interval || '';
             // 裂变开关：仅显式为 true 时勾选（旧步骤无字段 → 不勾选，保持原有行为）
             document.getElementById('step-iterate-open-tabs').checked = step.iterate_open_tabs === true;
             document.getElementById('iterate-interval-group').style.display = step.iterate_all ? 'block' : 'none';
+            document.getElementById('iterate-global-group').style.display = step.iterate_all ? 'block' : 'none';
+            updateBatchGroupVisibility();
             document.getElementById('step-modal-title').textContent = '编辑步骤';
             document.getElementById('step-modal').classList.add('show');
         }
@@ -1706,18 +1748,31 @@
                 .filter(s => s);
             const iterate_all = document.getElementById('step-iterate-all').checked;
             const iterate_interval = parseInt(document.getElementById('step-iterate-interval').value, 10) || 10;
-            // 分批字段可选填：仅当两组点击/休息均填有效正整数才写入，否则不带字段（保持不分批）
-            const batchSize = parseInt(document.getElementById('step-iterate-batch-size').value, 10);
-            const batchInterval = parseInt(document.getElementById('step-iterate-batch-interval').value, 10);
-            const batchValid = iterate_all
-                && Number.isInteger(batchSize) && batchSize > 0
-                && Number.isInteger(batchInterval) && batchInterval > 0;
+            const globalMode = iterate_all && document.getElementById('step-iterate-global').checked;
 
             const step = { url, button_selectors, confirm_selectors, iterate_all, iterate_interval };
-            if (batchValid) {
-                step.iterate_batch_size = batchSize;
-                step.iterate_batch_interval = batchInterval;
+
+            if (globalMode) {
+                step.iterate_global_unique_count = true;
+                const globalBatchSize = parseInt(document.getElementById('step-iterate-global-size').value, 10);
+                const globalBatchInterval = parseInt(document.getElementById('step-iterate-global-interval').value, 10);
+                if (Number.isInteger(globalBatchSize) && globalBatchSize > 0
+                    && Number.isInteger(globalBatchInterval) && globalBatchInterval > 0) {
+                    step.iterate_global_batch_size = globalBatchSize;
+                    step.iterate_global_batch_interval = globalBatchInterval;
+                }
+            } else {
+                // 分批字段可选填：仅当两组点击/休息均填有效正整数才写入，否则不带字段（保持不分批）
+                const batchSize = parseInt(document.getElementById('step-iterate-batch-size').value, 10);
+                const batchInterval = parseInt(document.getElementById('step-iterate-batch-interval').value, 10);
+                if (iterate_all
+                    && Number.isInteger(batchSize) && batchSize > 0
+                    && Number.isInteger(batchInterval) && batchInterval > 0) {
+                    step.iterate_batch_size = batchSize;
+                    step.iterate_batch_interval = batchInterval;
+                }
             }
+
             // 裂变开关：仅勾选时写入字段（未勾选不带字段，保持原有原地轮询行为）
             const openTabs = iterate_all && document.getElementById('step-iterate-open-tabs').checked;
             if (openTabs) {

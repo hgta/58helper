@@ -31,6 +31,25 @@
 - **OR** 轮询步骤是任务的最后一步
 - **THEN** 系统按原有原地轮询逻辑执行（同一页面内逐个点击，不创建标签页）
 
+### Requirement: 轮询全局唯一计数
+系统在「轮询页面所有相同元素」执行时，SHALL 支持可选的「全局唯一计数」模式：当步骤启用 `iterate_global_unique_count` 时，跨所有 `button_selectors` 匹配到的可见元素合并成一个全局队列统一计数，并采用 `iterate_global_batch_size` / `iterate_global_batch_interval` 控制全局分批休息；未启用时 MUST 保持原有按选择器独立计数的行为。
+
+#### Scenario: 启用全局唯一计数
+- **WHEN** 轮询步骤配置 `iterate_global_unique_count = true`
+- **AND** 用户填写了有效的 `iterate_global_batch_size` 与 `iterate_global_batch_interval`
+- **THEN** 系统把所有选择器匹配到的可见元素按 DOM/选择器顺序合并为一个全局队列
+- **AND** 全局累计点击数达到 `iterate_global_batch_size` 后，额外休息 `iterate_global_batch_interval` 秒再继续
+- **AND** 原「每组连续点击数 / 组间休息」字段被忽略
+
+#### Scenario: 未启用全局唯一计数保持局部分批
+- **WHEN** 轮询步骤未配置 `iterate_global_unique_count` 或该字段为假
+- **THEN** 系统按原有行为：每个选择器独立计数，满 `iterate_batch_size` 后休息 `iterate_batch_interval`
+
+#### Scenario: 全局唯一计数在裂变模式下同样生效
+- **WHEN** 轮询步骤同时启用 `iterate_global_unique_count` 与 `iterate_open_tabs`
+- **THEN** 主 tab 扫描时跨选择器合并描述符并记录全局序号
+- **AND** 临时 tab 内按 `selector + selectorIndex` 定位元素，临时 tab 流程按全局计数执行分批休息
+
 #### Scenario: 旧步骤经 UI 重存不静默启用裂变
 - **WHEN** 用户在编辑界面打开一个不含 `iterate_open_tabs` 字段的存量轮询步骤且未勾选新复选框即保存
 - **THEN** 保存后的步骤对象仍不包含该字段，执行行为与编辑前完全一致

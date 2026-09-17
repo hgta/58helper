@@ -11,7 +11,7 @@
 ## Task 2: 裂变执行逻辑
 
 - [x] 2.1 `electron/main.js`：将 `execute-task` 内联的「loadURL → 稳定等待 → 点击/轮询 → confirm」重构为 `runStepInWebContents(webContents, step, { allowFanout })`，主循环与裂变子步骤共用；`allowFanout=false` 保证临时 tab 内不再裂变
-- [x] 2.2 裂变分支（`step.iterate_open_tabs === true` 且非最后一步）：主 tab SCAN 快照描述符（text/href/aria/title/index）→ 创建 1 个临时 tab（自动激活）→ 逐元素 [加载列表页 → 描述符优先匹配 + 索引兜底 → 点击目标下钻（`<a>` 自身/祖先/后代 → 最深文本叶子 → 元素自身）后点击 → confirm → 临时 tab 内执行后续步骤 → 主 tab MARK 视觉标记 → 元素间隔/组间休息] → 关闭临时 tab 激活主 tab；点击后记录 `clickReason` 并做跳转校验（未跳转仅告警不中断）
+- [x] 2.2 裂变分支（`step.iterate_open_tabs === true` 且非最后一步）：主 tab SCAN 快照描述符（text/href/aria/title/selector/selectorIndex/globalIndex）→ 创建 1 个临时 tab（自动激活）→ 逐元素 [加载列表页 → 描述符优先匹配 + 索引兜底 → 点击目标下钻（`<a>` 自身/祖先/后代 → 最深文本叶子 → 元素自身）后点击 → confirm → 临时 tab 内执行后续步骤 → 主 tab MARK 视觉标记 → 元素间隔/组间休息] → 关闭临时 tab 激活主 tab；点击后记录 `clickReason` 并做跳转校验（未跳转仅告警不中断）；支持 `iterate_global_unique_count` 跨选择器合并队列与全局分批
 - [x] 2.3 异常处理：加载超时/元素不匹配/后续步骤异常/webContents 被用户关闭 → 记日志跳过当前元素，任务不中断
 - [ ] 2.4 手动验证：2 步任务裂变基本流、主 tab 不跳转、元素漂移跳过日志、执行中手动关临时 tab 不崩、旧任务（无字段）回归不变
 

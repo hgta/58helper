@@ -136,15 +136,129 @@ async function handleConfirmBox(webContents, confirmSelectors, runId) {
 
 // ===== 步骤执行辅助（主标签页与裂变临时标签页共用） =====
 
-// 原地轮询：在同一页面内逐个点击所有匹配的可见元素（现有行为，保持不变）
+// 原地轮询：在同一页面内逐个点击所有匹配的可见元素
+// 当 step.iterate_global_unique_count 为 true 时，跨所有选择器合并成一个全局队列统一计数。
 async function iterateInPlace(webContents, step, runId) {
     const intervalSec = Number(step.iterate_interval) > 0 ? Number(step.iterate_interval) : 10;
+    const globalUnique = step.iterate_global_unique_count === true;
+
     // 分批节奏：每组连续点击 N 个后额外休息 M 秒（仅字段有效时启用）
-    const batchSize = Number(step.iterate_batch_size);
-    const batchIntervalSec = Number(step.iterate_batch_interval);
+    let batchSize = Number(step.iterate_batch_size);
+    let batchIntervalSec = Number(step.iterate_batch_interval);
+    if (globalUnique) {
+        batchSize = Number(step.iterate_global_batch_size);
+        batchIntervalSec = Number(step.iterate_global_batch_interval);
+    }
     const batchEnabled = Number.isInteger(batchSize) && batchSize > 0
         && Number.isFinite(batchIntervalSec) && batchIntervalSec > 0;
 
+    if (globalUnique) {
+        // ===== 全局唯一计数模式：跨选择器合并队列 =====
+        const selectorsLiteral = step.button_selectors.map(s => s.replace(/'/g, "\\'")).join("','");
+        const initResult = await webContents.executeJavaScript(`
+            (function() {
+                function isVisible(node) {
+                    try {
+                        const rect = node.getBoundingClientRect();
+                        return rect.width > 0 && rect.height > 0;
+                    } catch (e) {
+                        return false;
+                    }
+                }
+                const selectors = ['${selectorsLiteral}'];
+                let totalVisible = 0;
+                for (const selector of selectors) {
+                    const els = document.querySelectorAll(selector);
+                    for (const el of els) {
+                        if (isVisible(el)) totalVisible++;
+                    }
+                }
+                return { totalVisible };
+            })()
+        `).catch(() => ({ totalVisible: 0 }));
+        if (!initResult || initResult.totalVisible === 0) {
+            logger.info('[Execute Task] 轮询: 全局模式无可见元素，跳过');
+            return;
+        }
+        logger.info(`[Execute Task] 轮询: 全局模式共 ${initResult.totalVisible} 个可见元素，跨选择器统一计数`);
+        taskControl.addProgressTotal(initResult.totalVisible, '轮询点击');
+
+        let clickedCount = 0;
+        while (true) {
+            await taskControl.checkpoint(runId);
+            const result = await webContents.executeJavaScript(`
+                (function() {
+                    function isVisible(node) {
+                        try {
+                            const rect = node.getBoundingClientRect();
+                            return rect.width > 0 && rect.height > 0;
+                        } catch (e) {
+                            return false;
+                        }
+                    }
+                    const selectors = ['${selectorsLiteral}'];
+                    for (const selector of selectors) {
+                        const els = document.querySelectorAll(selector);
+                        for (const el of els) {
+                            if (!isVisible(el)) continue;
+                            if (el.dataset.iterateGlobalClicked === '1') continue;
+                            el.dataset.iterateGlobalClicked = '1';
+                            el.click();
+                            const text = (el.innerText || el.textContent || '').trim().replace(/\\s+/g, ' ').slice(0, 30);
+                            return {
+                                clicked: true,
+                                selector: selector,
+                                tag: (el.tagName || '').toLowerCase(),
+                                id: el.id || '',
+                                cls: typeof el.className === 'string' ? el.className : (el.getAttribute('class') || ''),
+                                text: text,
+                                aria: el.getAttribute('aria-label') || '',
+                                title: el.getAttribute('title') || ''
+                            };
+                        }
+                    }
+                    let remaining = 0;
+                    for (const selector of selectors) {
+                        const els = document.querySelectorAll(selector);
+                        for (const el of els) {
+                            if (!isVisible(el)) continue;
+                            if (el.dataset.iterateGlobalClicked === '1') continue;
+                            remaining++;
+                        }
+                    }
+                    return { clicked: false, remaining: remaining };
+                })()
+            `).catch(() => ({ clicked: false, remaining: 0 }));
+            if (!result.clicked) break;
+            clickedCount++;
+            taskControl.tickProgress(1, `轮询 ${clickedCount}/${initResult.totalVisible}`);
+
+            let desc = '未知元素';
+            if (result.text || result.aria || result.title) {
+                desc = result.text || result.aria || result.title;
+            } else if (result.id) {
+                desc = '#' + result.id;
+            } else if (result.cls) {
+                desc = '.' + result.cls.split(' ')[0];
+            } else {
+                desc = result.tag;
+            }
+            logger.info(`[Execute Task] 轮询 [${clickedCount}/${initResult.totalVisible}] 点击: ${result.selector} -> ${desc}（剩余 ${result.remaining} 个未点击）`);
+
+            await handleConfirmBox(webContents, step.confirm_selectors || [], runId);
+            if (result.remaining > 0 && intervalSec > 0) {
+                logger.info(`[Execute Task] 轮询: 等待 ${intervalSec} 秒后点击下一个...`);
+                await taskControl.wait(intervalSec * 1000, runId);
+            }
+            if (batchEnabled && result.remaining > 0 && clickedCount % batchSize === 0) {
+                logger.info(`[Execute Task] 轮询: 全局已连续点击 ${batchSize} 个，休息 ${batchIntervalSec} 秒后继续...`);
+                await taskControl.wait(batchIntervalSec * 1000, runId);
+            }
+        }
+        return;
+    }
+
+    // ===== 非全局模式：按原有逐选择器逻辑执行 =====
     for (const selector of step.button_selectors) {
         // 先统计该选择器的可见元素总数
         const initResult = await webContents.executeJavaScript(`
@@ -333,7 +447,7 @@ async function runStepInWebContents(webContents, step, runId) {
 
 // 裂变前等待：临时标签页的列表由 JS 异步渲染，固定等待容易在「列表还没渲染出来」时就去点击，
 // 从而点到占位元素或错误元素。这里轮询可见元素数量，直到达到扫描时的数量、或连续多次稳定为止。
-async function waitForListRendered(webContents, selectorLiteral, expected, runId) {
+async function waitForListRendered(webContents, selectorsLiteral, expected, runId) {
     const countScript = `
         (function() {
             function isVisible(node) {
@@ -344,10 +458,13 @@ async function waitForListRendered(webContents, selectorLiteral, expected, runId
                     return false;
                 }
             }
-            const els = document.querySelectorAll('${selectorLiteral}');
+            const selectors = ['${selectorsLiteral}'];
             let n = 0;
-            for (const el of els) {
-                if (isVisible(el)) n++;
+            for (const selector of selectors) {
+                const els = document.querySelectorAll(selector);
+                for (const el of els) {
+                    if (isVisible(el)) n++;
+                }
             }
             return n;
         })()
@@ -374,18 +491,22 @@ async function waitForListRendered(webContents, selectorLiteral, expected, runId
 
 // 裂变模式：主标签页停在列表页做调度台（只扫描+标记），临时标签页逐元素
 // 「加载列表页 → 点击第 k 个元素（跳转留在临时标签页内）→ 执行后续步骤」
+// 当 step.iterate_global_unique_count 为 true 时，跨所有选择器合并成一个全局队列统一计数。
 async function runFanoutStep(mainWc, steps, stepIndex, runId) {
     const step = steps[stepIndex];
     const buttonSelectors = step.button_selectors || [];
-    // 已知限制：裂变仅对第一个选择器生效（与原地模式的逐选择器轮询不同）
-    const selector = buttonSelectors[0];
-    if (!selector) return;
+    if (buttonSelectors.length === 0) return;
 
     await taskControl.checkpoint(runId);
 
     const intervalSec = Number(step.iterate_interval) > 0 ? Number(step.iterate_interval) : 10;
-    const batchSize = Number(step.iterate_batch_size);
-    const batchIntervalSec = Number(step.iterate_batch_interval);
+    const globalUnique = step.iterate_global_unique_count === true;
+    let batchSize = Number(step.iterate_batch_size);
+    let batchIntervalSec = Number(step.iterate_batch_interval);
+    if (globalUnique) {
+        batchSize = Number(step.iterate_global_batch_size);
+        batchIntervalSec = Number(step.iterate_global_batch_interval);
+    }
     const batchEnabled = Number.isInteger(batchSize) && batchSize > 0
         && Number.isFinite(batchIntervalSec) && batchIntervalSec > 0;
 
@@ -417,6 +538,7 @@ async function runFanoutStep(mainWc, steps, stepIndex, runId) {
     await taskControl.wait(3000, runId);
 
     // SCAN：主标签页（已加载列表页）快照可见元素的描述符，作为跨加载的元素身份
+    const selectorsLiteral = buttonSelectors.map(s => s.replace(/'/g, "\\'")).join("','");
     const scanResult = await mainWc.executeJavaScript(`
         (function() {
             function isVisible(node) {
@@ -427,30 +549,36 @@ async function runFanoutStep(mainWc, steps, stepIndex, runId) {
                     return false;
                 }
             }
-            const els = document.querySelectorAll('${selector.replace(/'/g, "\\'")}');
+            const selectors = ['${selectorsLiteral}'];
             const items = [];
-            let visibleIndex = 0;
-            for (const el of els) {
-                if (!isVisible(el)) continue;
-                const a = el.closest('a');
-                const text = (el.innerText || el.textContent || '').trim().replace(/\\s+/g, ' ');
-                items.push({
-                    index: visibleIndex++,
-                    text: text.slice(0, 60),
-                    href: a ? (a.href || '') : (el.href || ''),
-                    aria: el.getAttribute('aria-label') || '',
-                    title: el.getAttribute('title') || ''
-                });
+            let globalIndex = 0;
+            for (const selector of selectors) {
+                const els = document.querySelectorAll(selector);
+                let visibleIndex = 0;
+                for (const el of els) {
+                    if (!isVisible(el)) continue;
+                    const a = el.closest('a');
+                    const text = (el.innerText || el.textContent || '').trim().replace(/\\s+/g, ' ');
+                    items.push({
+                        selector: selector,
+                        selectorIndex: visibleIndex++,
+                        globalIndex: globalIndex++,
+                        text: text.slice(0, 60),
+                        href: a ? (a.href || '') : (el.href || ''),
+                        aria: el.getAttribute('aria-label') || '',
+                        title: el.getAttribute('title') || ''
+                    });
+                }
             }
             return items;
         })()
     `).catch(() => []);
     const descriptors = Array.isArray(scanResult) ? scanResult : [];
     if (descriptors.length === 0) {
-        logger.info(`[Execute Task] 裂变: 选择器 ${selector} 无可见元素，跳过`);
+        logger.info(`[Execute Task] 裂变: 选择器 [${buttonSelectors.join(', ')}] 无可见元素，跳过`);
         return;
     }
-    logger.info(`[Execute Task] 裂变: 选择器 ${selector} 共 ${descriptors.length} 个可见元素，新标签页逐元素执行`);
+    logger.info(`[Execute Task] 裂变: ${globalUnique ? '全局模式' : '选择器 ' + buttonSelectors[0]} 共 ${descriptors.length} 个可见元素，新标签页逐元素执行`);
     // 扫描完成后才知道真实元素数，补入进度总量（用于估算剩余耗时）
     taskControl.addProgressTotal(descriptors.length, '裂变元素');
 
@@ -504,8 +632,7 @@ async function runFanoutStep(mainWc, steps, stepIndex, runId) {
             await taskControl.wait(3000, runId);
 
             // 列表页由 JS 异步渲染，固定等待可能落在「列表还没渲染完」的时刻，从而点到占位/错误元素
-            const selectorLiteral = selector.replace(/'/g, "\\'");
-            const renderedCount = await waitForListRendered(tempWc, selectorLiteral, descriptors.length, runId);
+            const renderedCount = await waitForListRendered(tempWc, selectorsLiteral, descriptors.length, runId);
             if (renderedCount < descriptors.length) {
                 logger.warn(`[Execute Task] 裂变 [${k + 1}/${descriptors.length}] 列表只渲染出 ${renderedCount} 个可见元素（扫描时为 ${descriptors.length} 个），可能点到错误元素`);
             }
@@ -551,7 +678,7 @@ async function runFanoutStep(mainWc, steps, stepIndex, runId) {
                         return dfs(root);
                     }
                     const desc = ${JSON.stringify(desc)};
-                    const els = document.querySelectorAll('${selectorLiteral}');
+                    const els = document.querySelectorAll(desc.selector);
                     const visible = [];
                     for (const el of els) {
                         if (isVisible(el)) visible.push(el);
@@ -569,7 +696,7 @@ async function runFanoutStep(mainWc, steps, stepIndex, runId) {
                             const href = hrefOf(el);
                             if (href && href !== desc.href) continue;
                         }
-                        const dist = Math.abs(i - desc.index);
+                        const dist = Math.abs(i - desc.selectorIndex);
                         if (dist < bestDist) {
                             bestDist = dist;
                             targetIndex = i;
@@ -577,8 +704,8 @@ async function runFanoutStep(mainWc, steps, stepIndex, runId) {
                         }
                     }
                     // 2) 兜底：按可见序号取
-                    if (targetIndex < 0 && desc.index < visible.length) {
-                        targetIndex = desc.index;
+                    if (targetIndex < 0 && desc.selectorIndex < visible.length) {
+                        targetIndex = desc.selectorIndex;
                         by = 'index';
                     }
                     if (targetIndex < 0) return { clicked: false, visibleCount: visible.length };
@@ -611,7 +738,7 @@ async function runFanoutStep(mainWc, steps, stepIndex, runId) {
                         clicked: true,
                         by: by,
                         index: targetIndex,
-                        descIndex: desc.index,
+                        descIndex: desc.globalIndex,
                         clickTag: clickable.tagName,
                         clickReason: clickReason,
                         text: normalize(el.innerText || el.textContent).slice(0, 30),
@@ -671,18 +798,21 @@ async function runFanoutStep(mainWc, steps, stepIndex, runId) {
                             return false;
                         }
                     }
-                    const els = document.querySelectorAll('${selector.replace(/'/g, "\\'")}');
+                    const selectors = ['${selectorsLiteral}'];
                     let n = 0;
-                    for (const el of els) {
-                        if (!isVisible(el)) continue;
-                        if (n === ${k}) {
-                            el.dataset.iterateDone = '1';
-                            el.style.outline = '2px solid #4caf50';
-                            el.style.outlineOffset = '2px';
-                            el.style.opacity = '0.55';
-                            return true;
+                    for (const selector of selectors) {
+                        const els = document.querySelectorAll(selector);
+                        for (const el of els) {
+                            if (!isVisible(el)) continue;
+                            if (n === ${desc.globalIndex}) {
+                                el.dataset.iterateDone = '1';
+                                el.style.outline = '2px solid #4caf50';
+                                el.style.outlineOffset = '2px';
+                                el.style.opacity = '0.55';
+                                return true;
+                            }
+                            n++;
                         }
-                        n++;
                     }
                     return false;
                 })()
