@@ -205,6 +205,15 @@ async function iterateInPlace(webContents, step, runId) {
                             el.dataset.iterateGlobalClicked = '1';
                             el.click();
                             const text = (el.innerText || el.textContent || '').trim().replace(/\\s+/g, ' ').slice(0, 30);
+                            let remaining = 0;
+                            for (const sel of selectors) {
+                                const nodes = document.querySelectorAll(sel);
+                                for (const node of nodes) {
+                                    if (!isVisible(node)) continue;
+                                    if (node.dataset.iterateGlobalClicked === '1') continue;
+                                    remaining++;
+                                }
+                            }
                             return {
                                 clicked: true,
                                 selector: selector,
@@ -213,7 +222,8 @@ async function iterateInPlace(webContents, step, runId) {
                                 cls: typeof el.className === 'string' ? el.className : (el.getAttribute('class') || ''),
                                 text: text,
                                 aria: el.getAttribute('aria-label') || '',
-                                title: el.getAttribute('title') || ''
+                                title: el.getAttribute('title') || '',
+                                remaining: remaining
                             };
                         }
                     }
