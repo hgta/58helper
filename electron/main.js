@@ -656,7 +656,7 @@ async function runFanoutStep(mainWc, steps, stepIndex, runId) {
                     break;
                 }
                 if (j < steps.length - 1) {
-                    await taskControl.wait(5000, runId);
+                    await taskControl.wait(2000, runId);
                 }
             }
 
@@ -1221,10 +1221,10 @@ function setupIpc() {
                     }
                 }
 
-                // 步骤间隔5秒（最后一个步骤不需要）
+                // 步骤间隔2秒（最后一个步骤不需要）
                 if (i < steps.length - 1) {
-                    logger.info(`[Execute Task] 等待 5 秒后执行下一步...`);
-                    await taskControl.wait(5000, runId);
+                    logger.info(`[Execute Task] 等待 2 秒后执行下一步...`);
+                    await taskControl.wait(2000, runId);
                 }
             }
 
