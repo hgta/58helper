@@ -986,14 +986,6 @@
             // 全局唯一计数勾选联动：切换局部分批 / 全局分批输入框
             document.getElementById('step-iterate-global').addEventListener('change', updateBatchGroupVisibility);
 
-            function updateBatchGroupVisibility() {
-                const iterateAll = document.getElementById('step-iterate-all').checked;
-                const globalMode = iterateAll && document.getElementById('step-iterate-global').checked;
-                document.getElementById('batch-local-group').style.display =
-                    iterateAll && !globalMode ? 'block' : 'none';
-                document.getElementById('batch-global-group').style.display =
-                    globalMode ? 'block' : 'none';
-            }
             
             // 窗口控制
             document.getElementById('win-min').addEventListener('click', () => {
@@ -1680,6 +1672,16 @@
                     </div>
                 </div>
             `).join('');
+        }
+
+        // 全局唯一计数 UI 显隐控制（addStep / editStep 均会调用）
+        function updateBatchGroupVisibility() {
+            const iterateAll = document.getElementById('step-iterate-all').checked;
+            const globalMode = iterateAll && document.getElementById('step-iterate-global').checked;
+            document.getElementById('batch-local-group').style.display =
+                iterateAll && !globalMode ? 'block' : 'none';
+            document.getElementById('batch-global-group').style.display =
+                globalMode ? 'block' : 'none';
         }
 
         // 添加步骤
