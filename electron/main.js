@@ -142,6 +142,62 @@ async function iterateInPlace(webContents, step, runId) {
     const intervalSec = Number(step.iterate_interval) > 0 ? Number(step.iterate_interval) : 10;
     const globalUnique = step.iterate_global_unique_count === true;
 
+    // 起始偏移：从第 startIndex 个可见元素开始轮询（1-based，非法值按 1）
+    const startIndexRaw = Number(step.iterate_start_index);
+    const startIndex = Number.isInteger(startIndexRaw) && startIndexRaw > 0 ? startIndexRaw : 1;
+    const skip = startIndex - 1;
+
+    // 页面内 isVisible 辅助（各 executeJavaScript 片段共用同一定义）
+    const isVisibleFn = `
+        function isVisible(node) {
+            try {
+                const rect = node.getBoundingClientRect();
+                return rect.width > 0 && rect.height > 0;
+            } catch (e) {
+                return false;
+            }
+        }
+    `;
+
+    // 给「跨选择器全局队列」中前 skip 个未标记的可见元素打上 clicked 标记（起始偏移跳过用）
+    const markGlobalSkipped = (selectorsLiteral) => `
+        (function() {
+            ${isVisibleFn}
+            const selectors = ['${selectorsLiteral}'];
+            let n = 0;
+            outer:
+            for (const selector of selectors) {
+                const els = document.querySelectorAll(selector);
+                for (const el of els) {
+                    if (!isVisible(el)) continue;
+                    if (el.dataset.iterateGlobalClicked === '1') continue;
+                    if (n >= ${skip}) break outer;
+                    el.dataset.iterateGlobalClicked = '1';
+                    n++;
+                }
+            }
+            return n;
+        })()
+    `;
+
+    // 给单个选择器中前 skip 个未标记的可见元素打上 clicked 标记（起始偏移跳过用）
+    const markSelectorSkipped = (selector) => `
+        (function() {
+            ${isVisibleFn}
+            const els = document.querySelectorAll('${selector.replace(/'/g, "\\'")}');
+            let n = 0;
+            for (const el of els) {
+                if (!isVisible(el)) continue;
+                if (el.dataset.iterateClicked === '1') continue;
+                if (n >= ${skip}) break;
+                el.dataset.iterateClicked = '1';
+                n++;
+            }
+            return n;
+        })()
+    `;
+
+
     // 分批节奏：每组连续点击 N 个后额外休息 M 秒（仅字段有效时启用）
     let batchSize = Number(step.iterate_batch_size);
     let batchIntervalSec = Number(step.iterate_batch_interval);
@@ -182,6 +238,16 @@ async function iterateInPlace(webContents, step, runId) {
         }
         logger.info(`[Execute Task] 轮询: 全局模式共 ${initResult.totalVisible} 个可见元素，跨选择器统一计数`);
         taskControl.addProgressTotal(initResult.totalVisible, '轮询点击');
+
+        // 起始偏移：跳过前 skip 个可见元素（打标记即可，后续遍历天然从第 startIndex 个开始）
+        if (skip > 0) {
+            if (skip >= initResult.totalVisible) {
+                logger.warn(`[Execute Task] 轮询: 起始偏移 ${startIndex} 大于等于可见元素总数 ${initResult.totalVisible}，跳过本轮询`);
+                return;
+            }
+            const marked = await webContents.executeJavaScript(markGlobalSkipped(selectorsLiteral)).catch(() => 0);
+            logger.info(`[Execute Task] 轮询: 从第 ${startIndex} 个元素开始（已跳过前 ${marked} 个）`);
+        }
 
         let clickedCount = 0;
         while (true) {
@@ -296,6 +362,16 @@ async function iterateInPlace(webContents, step, runId) {
         logger.info(`[Execute Task] 轮询: 选择器 ${selector} 共 ${initResult.visibleCount} 个可见元素，开始依次点击`);
         // 扫描完成后才知道真实元素数，补入进度总量（用于估算剩余耗时）
         taskControl.addProgressTotal(initResult.visibleCount, '轮询点击');
+
+        // 起始偏移：每个选择器独立跳过前 skip 个可见元素（保持「按选择器独立计数」语义）
+        if (skip > 0) {
+            if (skip >= initResult.visibleCount) {
+                logger.warn(`[Execute Task] 轮询: 选择器 ${selector} 可见元素 ${initResult.visibleCount} 个，起始偏移 ${startIndex} 超出，跳过该选择器`);
+                continue;
+            }
+            const marked = await webContents.executeJavaScript(markSelectorSkipped(selector)).catch(() => 0);
+            logger.info(`[Execute Task] 轮询: 选择器 ${selector} 从第 ${startIndex} 个元素开始（已跳过前 ${marked} 个）`);
+        }
 
         let clickedCount = 0;
         while (true) {
@@ -592,14 +668,30 @@ async function runFanoutStep(mainWc, steps, stepIndex, runId) {
     // 扫描完成后才知道真实元素数，补入进度总量（用于估算剩余耗时）
     taskControl.addProgressTotal(descriptors.length, '裂变元素');
 
+    // 起始偏移：截取子队列（全局模式按全局序号跳过，非全局按每个选择器独立跳过）
+    const startIndexRaw = Number(step.iterate_start_index);
+    const startIndex = Number.isInteger(startIndexRaw) && startIndexRaw > 0 ? startIndexRaw : 1;
+    const skip = startIndex - 1;
+    let queue = descriptors;
+    if (skip > 0) {
+        queue = globalUnique
+            ? descriptors.filter(d => d.globalIndex >= skip)
+            : descriptors.filter(d => d.selectorIndex >= skip);
+        if (queue.length === 0) {
+            logger.warn(`[Execute Task] 裂变: 起始偏移 ${startIndex} 大于等于可见元素总数 ${descriptors.length}，跳过本轮询`);
+            return;
+        }
+        logger.info(`[Execute Task] 裂变: 从第 ${startIndex} 个元素开始（已跳过前 ${descriptors.length - queue.length} 个）`);
+    }
+
     // 创建临时标签页（元素间复用，全部完成后关闭）
     let tempTabId = tabManager.createTab({ kind: 'temp' });
     tabManager.setTabTitle(tempTabId, `裂变 0/${descriptors.length}`);
 
     try {
-        for (let k = 0; k < descriptors.length; k++) {
+        for (let k = 0; k < queue.length; k++) {
             await taskControl.checkpoint(runId);
-            const desc = descriptors[k];
+            const desc = queue[k];
 
             // 临时标签页可能被用户手动关闭：关闭则重建，继续下一个元素
             let tempTab = tabManager.getTab(tempTabId);
@@ -829,11 +921,11 @@ async function runFanoutStep(mainWc, steps, stepIndex, runId) {
             `).catch(() => {});
 
             // REST：元素间隔 / 组间休息（语义与原地模式一致）
-            if (k < descriptors.length - 1 && intervalSec > 0) {
+            if (k < queue.length - 1 && intervalSec > 0) {
                 logger.info(`[Execute Task] 裂变: 等待 ${intervalSec} 秒后处理下一个元素...`);
                 await taskControl.wait(intervalSec * 1000, runId);
             }
-            if (batchEnabled && k < descriptors.length - 1 && (k + 1) % batchSize === 0) {
+            if (batchEnabled && k < queue.length - 1 && (k + 1) % batchSize === 0) {
                 logger.info(`[Execute Task] 裂变: 已连续处理 ${batchSize} 个，组间休息 ${batchIntervalSec} 秒后继续...`);
                 await taskControl.wait(batchIntervalSec * 1000, runId);
             }
@@ -849,7 +941,7 @@ async function runFanoutStep(mainWc, steps, stepIndex, runId) {
         if (taskControl.isStopped(runId)) {
             logger.info(`[Execute Task] 裂变: 任务已停止，关闭临时标签页`);
         } else {
-            logger.info(`[Execute Task] 裂变: 全部 ${descriptors.length} 个元素处理完毕`);
+            logger.info(`[Execute Task] 裂变: 全部 ${queue.length} 个元素处理完毕`);
         }
     }
 }
