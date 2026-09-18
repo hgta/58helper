@@ -1261,7 +1261,8 @@ function setupIpc() {
                 return { success: false, canceled: true };
             }
 
-            fs.writeFileSync(filePath, logs, 'utf8');
+            // 加 UTF-8 BOM，避免 Windows 记事本默认按 ANSI/GBK 解码导致中文乱码
+            fs.writeFileSync(filePath, '\ufeff' + logs, 'utf8');
             logger.info(`[Logs] 日志已导出: ${filePath}`);
             return { success: true, path: filePath, size: Buffer.byteLength(logs, 'utf8') };
         } catch (error) {
