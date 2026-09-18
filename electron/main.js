@@ -136,13 +136,23 @@ async function handleConfirmBox(webContents, confirmSelectors, runId) {
 
 // ===== 步骤执行辅助（主标签页与裂变临时标签页共用） =====
 
+// 全局唯一计数·跨轮询连续点击计数器：任务运行期间（runId 级别）跨步骤/跨标签页累计
+// 语义：无论每轮轮询实际点几个（受起始/结束序号影响），都叠加进全局计数；
+// 累计满 batchSize 个就组间休息 batchIntervalSec 秒，然后清零重新累计。
+const globalBatchCounters = new Map();
+function bumpGlobalBatchCounter(runId) {
+    const n = (globalBatchCounters.get(runId) || 0) + 1;
+    globalBatchCounters.set(runId, n);
+    return n;
+}
+
 // 原地轮询：在同一页面内逐个点击所有匹配的可见元素
 // 当 step.iterate_global_unique_count 为 true 时，跨所有选择器合并成一个全局队列统一计数。
 async function iterateInPlace(webContents, step, runId) {
     const intervalSec = Number(step.iterate_interval) > 0 ? Number(step.iterate_interval) : 10;
     const globalUnique = step.iterate_global_unique_count === true;
 
-    // 起始偏移：从第 startIndex 个可见元素开始轮询（1-based，非法值按 1）
+// 起始偏移：从第 startIndex 个可见元素开始轮询（1-based，非法值按 1）
     const startIndexRaw = Number(step.iterate_start_index);
     const startIndex = Number.isInteger(startIndexRaw) && startIndexRaw > 0 ? startIndexRaw : 1;
     const skip = startIndex - 1;
@@ -337,6 +347,13 @@ async function iterateInPlace(webContents, step, runId) {
             }
             logger.info(`[Execute Task] 轮询 [${clickedCount}/${initResult.totalVisible}] 点击: ${result.selector} -> ${desc}（剩余 ${result.remaining} 个未点击）`);
 
+            // 全局唯一计数·跨轮询累计：本轮点第 N 个也计入全局连续点击数，凑满一组就休息
+            const globalSeq = bumpGlobalBatchCounter(runId);
+            if (batchEnabled && globalSeq % batchSize === 0) {
+                logger.info(`[Execute Task] 轮询: 全局累计连续点击 ${batchSize} 个（跨轮询叠加，本轮第 ${clickedCount} 个），休息 ${batchIntervalSec} 秒后继续...`);
+                await taskControl.wait(batchIntervalSec * 1000, runId);
+            }
+
             // 结束序号：已处理到第 endIndex 个，停止轮询（remaining 是按整页统计的，不受 end 限制）
             if (hasEnd && clickedCount >= maxClicks) {
                 logger.info(`[Execute Task] 轮询: 已处理到第 ${endIndex} 个元素，结束本轮询`);
@@ -347,10 +364,6 @@ async function iterateInPlace(webContents, step, runId) {
             if (result.remaining > 0 && intervalSec > 0) {
                 logger.info(`[Execute Task] 轮询: 等待 ${intervalSec} 秒后点击下一个...`);
                 await taskControl.wait(intervalSec * 1000, runId);
-            }
-            if (batchEnabled && result.remaining > 0 && clickedCount % batchSize === 0) {
-                logger.info(`[Execute Task] 轮询: 全局已连续点击 ${batchSize} 个，休息 ${batchIntervalSec} 秒后继续...`);
-                await taskControl.wait(batchIntervalSec * 1000, runId);
             }
         }
         return;
@@ -1543,6 +1556,8 @@ function setupIpc() {
         } finally {
             // 结束本轮任务（runId 不匹配时不会影响新一轮任务）
             taskControl.end(runId);
+            // 全局唯一计数的跨轮询累计计数随任务结束清零（新一轮任务重新累计）
+            globalBatchCounters.delete(runId);
         }
     });
 }
