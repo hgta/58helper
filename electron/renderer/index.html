@@ -907,8 +907,11 @@
                     </label>
                 </div>
                 <div class="form-group" id="iterate-start-group" style="display: none;">
-                    <label>从第几个元素开始轮询（默认 1）</label>
-                    <input type="number" id="step-iterate-start-index" value="1" min="1">
+                    <label>从第几个元素开始 / 到第几个结束（结束留空 = 到最后）</label>
+                    <div style="display: flex; gap: 8px;">
+                        <input type="number" id="step-iterate-start-index" value="1" min="1" title="从第几个元素开始轮询">
+                        <input type="number" id="step-iterate-end-index" value="" min="1" placeholder="结束（空=最后）" title="到第几个元素结束">
+                    </div>
                 </div>
                 <div class="form-group" id="iterate-interval-group" style="display: none;">
                     <label>轮询间隔（秒）</label>
@@ -986,6 +989,7 @@
                 if (!e.target.checked) {
                     document.getElementById('step-iterate-global').checked = false;
                     document.getElementById('step-iterate-start-index').value = 1;
+                    document.getElementById('step-iterate-end-index').value = '';
                 }
                 updateBatchGroupVisibility();
             });
@@ -1701,6 +1705,7 @@
             document.getElementById('step-iterate-global').checked = false;
             document.getElementById('step-iterate-interval').value = 10;
             document.getElementById('step-iterate-start-index').value = 1;
+            document.getElementById('step-iterate-end-index').value = '';
             document.getElementById('step-iterate-batch-size').value = 10;
             document.getElementById('step-iterate-batch-interval').value = 60;
             document.getElementById('step-iterate-global-size').value = 10;
@@ -1726,6 +1731,7 @@
             document.getElementById('step-iterate-global').checked = step.iterate_global_unique_count === true;
             document.getElementById('step-iterate-interval').value = step.iterate_interval || 10;
             document.getElementById('step-iterate-start-index').value = step.iterate_start_index || 1;
+            document.getElementById('step-iterate-end-index').value = step.iterate_end_index || '';
             // 分批字段可选填：旧步骤无字段时留空（placeholder 显示默认），填值才启用分批
             document.getElementById('step-iterate-batch-size').value = step.iterate_batch_size || '';
             document.getElementById('step-iterate-batch-interval').value = step.iterate_batch_interval || '';
@@ -1765,10 +1771,14 @@
 
             const step = { url, button_selectors, confirm_selectors, iterate_all, iterate_interval };
 
-            // 起始偏移：仅轮询步骤写入；空/非法按 1 处理
+            // 元素序号范围：仅轮询步骤写入；起始空/非法按 1，结束留空 = 到最后一个
             if (iterate_all) {
                 const startIdx = parseInt(document.getElementById('step-iterate-start-index').value, 10);
                 step.iterate_start_index = (Number.isInteger(startIdx) && startIdx > 0) ? startIdx : 1;
+                const endIdx = parseInt(document.getElementById('step-iterate-end-index').value, 10);
+                if (Number.isInteger(endIdx) && endIdx > 0) {
+                    step.iterate_end_index = endIdx;
+                }
             }
 
             if (globalMode) {

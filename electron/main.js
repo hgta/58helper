@@ -147,6 +147,12 @@ async function iterateInPlace(webContents, step, runId) {
     const startIndex = Number.isInteger(startIndexRaw) && startIndexRaw > 0 ? startIndexRaw : 1;
     const skip = startIndex - 1;
 
+    // 结束序号：到第 endIndex 个元素结束（1-based，含端点；空/非法 = 到最后一个）
+    const endIndexRaw = Number(step.iterate_end_index);
+    const endIndex = Number.isInteger(endIndexRaw) && endIndexRaw > 0 ? endIndexRaw : null;
+    const hasEnd = endIndex !== null;
+    const maxClicks = hasEnd ? (endIndex - startIndex + 1) : Infinity;
+
     // 页面内 isVisible 辅助（各 executeJavaScript 片段共用同一定义）
     const isVisibleFn = `
         function isVisible(node) {
@@ -248,6 +254,16 @@ async function iterateInPlace(webContents, step, runId) {
             const marked = await webContents.executeJavaScript(markGlobalSkipped(selectorsLiteral)).catch(() => 0);
             logger.info(`[Execute Task] 轮询: 从第 ${startIndex} 个元素开始（已跳过前 ${marked} 个）`);
         }
+        // 结束序号：start/end 矛盾或 end 超出总数时收紧到合理范围
+        if (hasEnd && endIndex < startIndex) {
+            logger.warn(`[Execute Task] 轮询: 结束序号 ${endIndex} 小于起始序号 ${startIndex}，跳过本轮询`);
+            return;
+        }
+        if (hasEnd && endIndex > initResult.totalVisible) {
+            logger.warn(`[Execute Task] 轮询: 结束序号 ${endIndex} 大于可见元素总数 ${initResult.totalVisible}，按总数处理`);
+        } else if (hasEnd) {
+            logger.info(`[Execute Task] 轮询: 处理第 ${startIndex} ~ ${endIndex} 个元素，共 ${Math.min(maxClicks, initResult.totalVisible - skip)} 个`);
+        }
 
         let clickedCount = 0;
         while (true) {
@@ -321,6 +337,12 @@ async function iterateInPlace(webContents, step, runId) {
             }
             logger.info(`[Execute Task] 轮询 [${clickedCount}/${initResult.totalVisible}] 点击: ${result.selector} -> ${desc}（剩余 ${result.remaining} 个未点击）`);
 
+            // 结束序号：已处理到第 endIndex 个，停止轮询（remaining 是按整页统计的，不受 end 限制）
+            if (hasEnd && clickedCount >= maxClicks) {
+                logger.info(`[Execute Task] 轮询: 已处理到第 ${endIndex} 个元素，结束本轮询`);
+                break;
+            }
+
             await handleConfirmBox(webContents, step.confirm_selectors || [], runId);
             if (result.remaining > 0 && intervalSec > 0) {
                 logger.info(`[Execute Task] 轮询: 等待 ${intervalSec} 秒后点击下一个...`);
@@ -371,6 +393,18 @@ async function iterateInPlace(webContents, step, runId) {
             }
             const marked = await webContents.executeJavaScript(markSelectorSkipped(selector)).catch(() => 0);
             logger.info(`[Execute Task] 轮询: 选择器 ${selector} 从第 ${startIndex} 个元素开始（已跳过前 ${marked} 个）`);
+        }
+        // 结束序号：每个选择器独立应用（处理该选择器的第 startIndex ~ endIndex 个元素）
+        if (hasEnd && endIndex < startIndex) {
+            logger.warn(`[Execute Task] 轮询: 选择器 ${selector} 结束序号 ${endIndex} 小于起始序号 ${startIndex}，跳过该选择器`);
+            continue;
+        }
+        if (hasEnd) {
+            if (endIndex > initResult.visibleCount) {
+                logger.warn(`[Execute Task] 轮询: 选择器 ${selector} 可见元素 ${initResult.visibleCount} 个，结束序号 ${endIndex} 超出，按总数处理`);
+            } else {
+                logger.info(`[Execute Task] 轮询: 选择器 ${selector} 处理第 ${startIndex} ~ ${endIndex} 个元素，共 ${maxClicks} 个`);
+            }
         }
 
         let clickedCount = 0;
@@ -427,6 +461,12 @@ async function iterateInPlace(webContents, step, runId) {
                 desc = i.text || i.aria || i.title || (i.id ? '#' + i.id : '') || (i.cls ? '.' + i.cls.split(' ')[0] : '') || i.tag;
             }
             logger.info(`[Execute Task] 轮询 [${clickedCount}/${initResult.visibleCount}] 点击: ${selector} -> ${desc}（剩余 ${result.remaining} 个未点击）`);
+
+            // 结束序号：已处理到该选择器的第 endIndex 个元素，停止
+            if (hasEnd && clickedCount >= maxClicks) {
+                logger.info(`[Execute Task] 轮询: 选择器 ${selector} 已处理到第 ${endIndex} 个元素，结束该选择器轮询`);
+                break;
+            }
 
             // 每个元素点击后立即处理确认框
             await handleConfirmBox(webContents, step.confirm_selectors || [], runId);
@@ -672,16 +712,26 @@ async function runFanoutStep(mainWc, steps, stepIndex, runId) {
     const startIndexRaw = Number(step.iterate_start_index);
     const startIndex = Number.isInteger(startIndexRaw) && startIndexRaw > 0 ? startIndexRaw : 1;
     const skip = startIndex - 1;
+    // 结束序号：到第 endIndex 个元素结束（1-based，含端点；空/非法 = 到最后一个）
+    const endIndexRaw = Number(step.iterate_end_index);
+    const endIndex = Number.isInteger(endIndexRaw) && endIndexRaw > 0 ? endIndexRaw : null;
     let queue = descriptors;
-    if (skip > 0) {
-        queue = globalUnique
-            ? descriptors.filter(d => d.globalIndex >= skip)
-            : descriptors.filter(d => d.selectorIndex >= skip);
-        if (queue.length === 0) {
-            logger.warn(`[Execute Task] 裂变: 起始偏移 ${startIndex} 大于等于可见元素总数 ${descriptors.length}，跳过本轮询`);
+    if (skip > 0 || endIndex !== null) {
+        if (endIndex !== null && endIndex < startIndex) {
+            logger.warn(`[Execute Task] 裂变: 结束序号 ${endIndex} 小于起始序号 ${startIndex}，跳过本轮询`);
             return;
         }
-        logger.info(`[Execute Task] 裂变: 从第 ${startIndex} 个元素开始（已跳过前 ${descriptors.length - queue.length} 个）`);
+        queue = descriptors.filter(d => {
+            const idx = globalUnique ? d.globalIndex : d.selectorIndex; // 0-based
+            if (idx < skip) return false;
+            if (endIndex !== null && idx + 1 > endIndex) return false;
+            return true;
+        });
+        if (queue.length === 0) {
+            logger.warn(`[Execute Task] 裂变: 序号范围第 ${startIndex} ~ ${endIndex === null ? '最后' : endIndex} 个无元素，跳过本轮询`);
+            return;
+        }
+        logger.info(`[Execute Task] 裂变: 处理第 ${startIndex} ~ ${endIndex === null ? '最后' : endIndex} 个元素，共 ${queue.length} 个`);
     }
 
     // 创建临时标签页（元素间复用，全部完成后关闭）
