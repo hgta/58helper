@@ -718,8 +718,6 @@ async function runFanoutStep(mainWc, steps, stepIndex, runId) {
         return;
     }
     logger.info(`[Execute Task] 裂变: ${globalUnique ? '全局模式' : '选择器 ' + buttonSelectors[0]} 共 ${descriptors.length} 个可见元素，新标签页逐元素执行`);
-    // 扫描完成后才知道真实元素数，补入进度总量（用于估算剩余耗时）
-    taskControl.addProgressTotal(descriptors.length, '裂变元素');
 
     // 起始偏移：截取子队列（全局模式按全局序号跳过，非全局按每个选择器独立跳过）
     const startIndexRaw = Number(step.iterate_start_index);
@@ -747,9 +745,12 @@ async function runFanoutStep(mainWc, steps, stepIndex, runId) {
         logger.info(`[Execute Task] 裂变: 处理第 ${startIndex} ~ ${endIndex === null ? '最后' : endIndex} 个元素，共 ${queue.length} 个`);
     }
 
+    // 扫描完成后才知道真实元素数，补入进度总量（按本轮实际要处理的 queue 数，与日志分母一致）
+    taskControl.addProgressTotal(queue.length, '裂变元素');
+
     // 创建临时标签页（元素间复用，全部完成后关闭）
     let tempTabId = tabManager.createTab({ kind: 'temp' });
-    tabManager.setTabTitle(tempTabId, `裂变 0/${descriptors.length}`);
+    tabManager.setTabTitle(tempTabId, `裂变 0/${queue.length}`);
 
     try {
         for (let k = 0; k < queue.length; k++) {
@@ -790,7 +791,7 @@ async function runFanoutStep(mainWc, steps, stepIndex, runId) {
                 await taskControl.abortable(loadPromise, runId);
             } catch (loadError) {
                 if (loadError && loadError.aborted) throw loadError;
-                logger.warn(`[Execute Task] 裂变 [${k + 1}/${descriptors.length}] 列表页加载警告: ${loadError.message}，跳过该元素`);
+                logger.warn(`[Execute Task] 裂变 [${k + 1}/${queue.length}] 列表页加载警告: ${loadError.message}，跳过该元素`);
                 taskControl.tickProgress(1, `裂变 ${k + 1}/${descriptors.length}`);
                 continue;
             }
@@ -799,7 +800,7 @@ async function runFanoutStep(mainWc, steps, stepIndex, runId) {
             // 列表页由 JS 异步渲染，固定等待可能落在「列表还没渲染完」的时刻，从而点到占位/错误元素
             const renderedCount = await waitForListRendered(tempWc, selectorsLiteral, descriptors.length, runId);
             if (renderedCount < descriptors.length) {
-                logger.warn(`[Execute Task] 裂变 [${k + 1}/${descriptors.length}] 列表只渲染出 ${renderedCount} 个可见元素（扫描时为 ${descriptors.length} 个），可能点到错误元素`);
+                logger.warn(`[Execute Task] 裂变 [${k + 1}/${queue.length}] 列表只渲染出 ${renderedCount} 个可见元素（扫描时为 ${descriptors.length} 个），可能点到错误元素`);
             }
 
             const urlBefore = tempWc.isDestroyed() ? '' : tempWc.getURL();
@@ -915,11 +916,11 @@ async function runFanoutStep(mainWc, steps, stepIndex, runId) {
                 })()
             `).catch(() => ({ clicked: false, visibleCount: 0 }));
             if (!clickResult || !clickResult.clicked) {
-                logger.warn(`[Execute Task] 裂变 [${k + 1}/${descriptors.length}] 未匹配到元素（列表可能已变化），跳过`);
+                logger.warn(`[Execute Task] 裂变 [${k + 1}/${queue.length}] 未匹配到元素（列表可能已变化），跳过`);
                 taskControl.tickProgress(1, `裂变 ${k + 1}/${descriptors.length}`);
                 continue;
             }
-            logger.info(`[Execute Task] 裂变 [${k + 1}/${descriptors.length}] 点击元素(${clickResult.by}): 第${clickResult.index}个 <${clickResult.clickTag}>${clickResult.clickReason ? ' [' + clickResult.clickReason + ']' : ''} ${clickResult.text || '未知元素'}${clickResult.href ? ' -> ' + clickResult.href : ''}`);
+            logger.info(`[Execute Task] 裂变 [${k + 1}/${queue.length}] 点击元素(${clickResult.by}): 第${clickResult.index + 1}个 <${clickResult.clickTag}>${clickResult.clickReason ? ' [' + clickResult.clickReason + ']' : ''} ${clickResult.text || '未知元素'}${clickResult.href ? ' -> ' + clickResult.href : ''}`);
 
             // 校验点击是否真的生效（同标签页内跳转）；未跳转时打印诊断，便于定位「日志说点了但页面没动」
             let navigated = !tempWc.isDestroyed() && tempWc.getURL() !== urlBefore;
@@ -929,7 +930,7 @@ async function runFanoutStep(mainWc, steps, stepIndex, runId) {
                 if (tempWc.getURL() !== urlBefore) navigated = true;
             }
             if (!navigated && !tempWc.isDestroyed()) {
-                logger.warn(`[Execute Task] 裂变 [${k + 1}/${descriptors.length}] 点击后页面未跳转（仍停留在 ${urlBefore}）`
+                logger.warn(`[Execute Task] 裂变 [${k + 1}/${queue.length}] 点击后页面未跳转（仍停留在 ${urlBefore}）`
                     + `；扫描时该元素为第 ${clickResult.descIndex} 个「${desc.text || '无文本'}」，本次实际点了第 ${clickResult.index} 个 <${clickResult.clickTag}>${clickResult.clickReason ? ' [' + clickResult.clickReason + ']' : ''}>`);
             }
 
