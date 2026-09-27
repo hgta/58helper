@@ -568,6 +568,11 @@ async function answerQuiz(webContents, step, runId) {
                     try { el.dispatchEvent(new MouseEvent('mousedown', opts)); } catch (e) {}
                     try { el.dispatchEvent(new MouseEvent('mouseup', opts)); } catch (e) {}
                     try { el.dispatchEvent(new MouseEvent('click', opts)); } catch (e) {}
+                    try {
+                        const touch = new Touch({ identifier: Date.now(), target: el, clientX: x, clientY: y, pageX: x, pageY: y, radiusX: 1, radiusY: 1, rotationAngle: 0, force: 1 });
+                        el.dispatchEvent(new TouchEvent('touchstart', { bubbles: true, cancelable: true, touches: [touch], targetTouches: [touch], changedTouches: [touch] }));
+                        el.dispatchEvent(new TouchEvent('touchend', { bubbles: true, cancelable: true, touches: [], targetTouches: [], changedTouches: [touch] }));
+                    } catch (e) {}
                     try { el.click(); } catch (e) {}
                     return true;
                 }
@@ -599,6 +604,11 @@ async function answerQuiz(webContents, step, runId) {
                 try { el.dispatchEvent(new MouseEvent('mousedown', opts)); } catch (e) {}
                 try { el.dispatchEvent(new MouseEvent('mouseup', opts)); } catch (e) {}
                 try { el.dispatchEvent(new MouseEvent('click', opts)); } catch (e) {}
+                try {
+                    const touch = new Touch({ identifier: Date.now(), target: el, clientX: x, clientY: y, pageX: x, pageY: y, radiusX: 1, radiusY: 1, rotationAngle: 0, force: 1 });
+                    el.dispatchEvent(new TouchEvent('touchstart', { bubbles: true, cancelable: true, touches: [touch], targetTouches: [touch], changedTouches: [touch] }));
+                    el.dispatchEvent(new TouchEvent('touchend', { bubbles: true, cancelable: true, touches: [], targetTouches: [], changedTouches: [touch] }));
+                } catch (e) {}
                 try { el.click(); } catch (e) {}
                 return true;
             }
@@ -618,25 +628,61 @@ async function answerQuiz(webContents, step, runId) {
         })()
     `;
 
+    // 弹窗定位逻辑（各脚本共用）：优先 .popup_content.learnanswer，
+    // 找不到再放宽为「class 含 learnanswer / popup_content 的可见元素」
+    const findModalSnippet = `
+        function findQuizModal() {
+            const direct = document.querySelector('.popup_content.learnanswer');
+            if (direct && direct.getBoundingClientRect().width > 0) return direct;
+            const candidates = Array.from(document.querySelectorAll('[class*="learnanswer"], [class*="popup_content"], [class*="popup"]'));
+            return candidates.find(el => {
+                const r = el.getBoundingClientRect();
+                return r.width > 0 && r.height > 0;
+            }) || null;
+        }
+        function optionPattern() { return /^[A-D][、\\.．)）\\s:：]/; }
+    `;
+
     // 答题弹窗是否出现（可见且内部有 A-D 选项文本）
     const modalVisibleScript = `
         (function() {
-            const modal = document.querySelector('.popup_content.learnanswer');
+            ${findModalSnippet}
+            const modal = findQuizModal();
             if (!modal) return false;
-            const r = modal.getBoundingClientRect();
-            if (r.width <= 0 || r.height <= 0) return false;
             const all = Array.from(modal.querySelectorAll('*'));
-            return all.some(el => /^[A-D]、/.test((el.innerText || '').trim()));
+            return all.some(el => optionPattern().test((el.innerText || '').trim()));
         })()
     `;
 
     // 答题弹窗是否已关闭
     const modalClosedScript = `
         (function() {
-            const modal = document.querySelector('.popup_content.learnanswer');
-            if (!modal) return true;
-            const r = modal.getBoundingClientRect();
-            return r.width <= 0 || r.height <= 0;
+            ${findModalSnippet}
+            const modal = findQuizModal();
+            return !modal;
+        })()
+    `;
+
+    // 弹窗未出现时的诊断脚本：_dump 出页面里所有弹窗类元素和疑似选项文本
+    const modalDiagScript = `
+        (function() {
+            function rectOf(el) {
+                const r = el.getBoundingClientRect();
+                return { w: Math.round(r.width), h: Math.round(r.height) };
+            }
+            const diag = { url: location.href, iframes: document.querySelectorAll('iframe').length, popups: [], optionTexts: [] };
+            document.querySelectorAll('*').forEach(el => {
+                const cls = (typeof el.className === 'string' ? el.className : '');
+                if (/popup|learnanswer|modal|dialog|mask|uni-modal/i.test(cls)) {
+                    if (diag.popups.length < 15) diag.popups.push({ tag: el.tagName.toLowerCase(), cls: cls.slice(0, 80), rect: rectOf(el) });
+                }
+            });
+            const optLike = Array.from(document.querySelectorAll('uni-view, view, div, label, button, span, uni-text')).filter(el => {
+                const t = (el.innerText || '').trim();
+                return /^[A-D][、\\.．)）\\s:：]/.test(t) && t.length > 0 && t.length < 200;
+            }).slice(0, 10);
+            diag.optionTexts = optLike.map(el => ({ cls: String(el.className).slice(0, 60), text: (el.innerText || '').trim().slice(0, 60) }));
+            return diag;
         })()
     `;
 
@@ -659,7 +705,9 @@ async function answerQuiz(webContents, step, runId) {
         await taskControl.wait(800, runId);
         const modalOk = await quizPollTrue(webContents, runId, modalVisibleScript, 10000);
         if (!modalOk) {
-            logger.warn(`[Execute Task] 答题: 第 ${opened.index} 题弹窗未出现，停止答题（避免答案错位）`);
+            // 弹窗未检测到：输出页面诊断信息，便于定位真实 DOM 结构
+            const diag = await webContents.executeJavaScript(modalDiagScript).catch(() => null);
+            logger.warn(`[Execute Task] 答题: 第 ${opened.index} 题弹窗未出现，停止答题（避免答案错位）。页面诊断: ${diag ? JSON.stringify(diag) : '获取失败'}`);
             break;
         }
 
@@ -689,20 +737,26 @@ async function answerQuiz(webContents, step, runId) {
                 }
 
                 const letters = ${JSON.stringify(letters)};
-                const modal = document.querySelector('.popup_content.learnanswer');
+                ${findModalSnippet}
+                const modal = findQuizModal();
                 if (!modal) return { ok: false, reason: 'no-modal', texts: [] };
 
-                // 优先找 .option 元素；找不到再扫描所有元素
+                // 优先找 .option 元素；找不到再按「A、/A./A)」等格式扫描
                 let options = Array.from(modal.querySelectorAll('.option'));
                 if (options.length === 0) {
-                    options = Array.from(modal.querySelectorAll('uni-view, view, div, button')).filter(el => /^[A-D]、/.test((el.innerText || '').trim()));
+                    options = Array.from(modal.querySelectorAll('uni-view, view, div, button, label')).filter(el => {
+                        const t = (el.innerText || '').trim();
+                        return optionPattern().test(t);
+                    });
+                    // 只保留最外层选项（去掉嵌套的子元素）
+                    options = options.filter(el => !options.some(o => o !== el && o.contains(el)));
                 }
                 const optionTexts = options.map(o => (o.innerText || '').trim()).filter((v, i, a) => a.indexOf(v) === i);
 
                 const clicked = [];
                 const clickedEls = [];
                 for (const L of letters) {
-                    const target = options.find(opt => (opt.innerText || '').trim().startsWith(L + '、'));
+                    const target = options.find(opt => optionPattern().test((opt.innerText || '').trim()) && (opt.innerText || '').trim().charAt(0) === L);
                     if (target) {
                         simulatePointer(target);
                         clicked.push(L);
@@ -714,7 +768,7 @@ async function answerQuiz(webContents, step, runId) {
                 let selected = Array.from(modal.querySelectorAll('.option.on')).map(o => (o.innerText || '').trim());
                 if (selected.length === 0 && clicked.length > 0) {
                     for (const L of letters) {
-                        const target = options.find(opt => (opt.innerText || '').trim().startsWith(L + '、'));
+                        const target = options.find(opt => optionPattern().test((opt.innerText || '').trim()) && (opt.innerText || '').trim().charAt(0) === L);
                         if (target) {
                             const text = target.querySelector('.text, .text-black, span');
                             if (text) simulatePointer(text);
