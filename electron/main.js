@@ -570,14 +570,16 @@ async function answerQuiz(webContents, step, runId) {
         })()
     `;
 
-    // 答题弹窗是否出现（可见且含选项）
+    // 答题弹窗是否出现（可见且内部有文字节点，不再强依赖 .option 类）
     const modalVisibleScript = `
         (function() {
             const modal = document.querySelector('.popup_content.learnanswer');
             if (!modal) return false;
             const r = modal.getBoundingClientRect();
             if (r.width <= 0 || r.height <= 0) return false;
-            return modal.querySelectorAll('.option').length > 0;
+            // 只要弹窗里出现带 "A、" / "B、" / "C、" 文本的元素即认为已打开
+            const all = Array.from(modal.querySelectorAll('*'));
+            return all.some(el => /^[A-D]、/.test((el.innerText || '').trim()));
         })()
     `;
 
@@ -625,7 +627,7 @@ async function answerQuiz(webContents, step, runId) {
             break;
         }
 
-        // 选择答案对应的选项（按选项文本前缀字母匹配，支持多选 A,B / AB）
+        // 选择答案对应的选项（按选项文本前缀字母匹配，不依赖 .option 类）
         const letters = answerList[i].replace(/[^A-D]/g, '').split('');
         if (letters.length === 0) {
             logger.warn(`[Execute Task] 答题: 答案 "${answerList[i]}" 无有效字母，停止答题`);
@@ -634,24 +636,42 @@ async function answerQuiz(webContents, step, runId) {
         const pickScript = `
             (function() {
                 const letters = ${JSON.stringify(letters)};
-                const options = Array.from(document.querySelectorAll('.popup_content .option'));
+                const modal = document.querySelector('.popup_content.learnanswer');
+                if (!modal) return { ok: false, reason: 'no-modal', texts: [] };
+                const all = Array.from(modal.querySelectorAll('*'));
+                const optionTexts = all
+                    .map(el => (el.innerText || '').trim())
+                    .filter(t => /^[A-D]、/.test(t))
+                    .filter((v, i, a) => a.indexOf(v) === i);
                 const clicked = [];
                 for (const L of letters) {
-                    const target = options.find(opt => {
-                        const t = (opt.innerText || '').trim();
-                        return t.startsWith(L + '、') || t.startsWith(L + '.') || t.startsWith(L + ' ') || t === L;
+                    const target = all.find(el => {
+                        const t = (el.innerText || '').trim();
+                        return t.startsWith(L + '、');
                     });
-                    if (target) { try { target.click(); } catch (e) {} clicked.push(L); }
+                    if (target) {
+                        // 尽量点包含文本的块级元素本身；如果 target 是文本 span，则上溯到可见 uni-view
+                        let clickEl = target;
+                        while (clickEl && clickEl !== modal) {
+                            const r = clickEl.getBoundingClientRect();
+                            if (r.width > 0 && r.height > 0) break;
+                            clickEl = clickEl.parentElement;
+                        }
+                        try {
+                            (clickEl || target).click();
+                        } catch (e) {}
+                        clicked.push(L);
+                    }
                 }
                 if (clicked.length === 0) {
-                    return { ok: false, texts: options.map(o => (o.innerText || '').trim()) };
+                    return { ok: false, reason: 'no-match', texts: optionTexts };
                 }
                 return { ok: true, clicked: clicked };
             })()
         `;
         const picked = await webContents.executeJavaScript(pickScript).catch(() => null);
         if (!picked || !picked.ok) {
-            logger.warn(`[Execute Task] 答题: 第 ${opened.index} 题未匹配到选项 ${letters.join(',')}（选项: ${picked && picked.texts ? picked.texts.join(' | ') : '无'}），停止答题（避免答案错位）`);
+            logger.warn(`[Execute Task] 答题: 第 ${opened.index} 题未匹配到选项 ${letters.join(',')}（原因: ${picked ? picked.reason : 'exception'}，识别到的选项: ${picked && picked.texts ? picked.texts.join(' | ') : '无'}），停止答题（避免答案错位）`);
             break;
         }
 
