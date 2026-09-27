@@ -654,12 +654,15 @@ async function answerQuiz(webContents, step, runId) {
         })()
     `;
 
-    // 答题弹窗是否已关闭
+    // 答题弹窗是否已关闭（只有含选项文本的弹窗才算答题弹窗还开着，
+    // 提交后出现的「恭喜领取」弹窗不算）
     const modalClosedScript = `
         (function() {
             ${findModalSnippet}
             const modal = findQuizModal();
-            return !modal;
+            if (!modal) return true;
+            const all = Array.from(modal.querySelectorAll('*'));
+            return !all.some(el => optionPattern().test((el.innerText || '').trim()));
         })()
     `;
 
@@ -686,12 +689,60 @@ async function answerQuiz(webContents, step, runId) {
         })()
     `;
 
+    // 提交按钮：优先在弹窗内找文字含「提交」的最内层元素（避免点中弹窗里第一个
+    // .button 可能是关闭按钮的问题），找不到再退回选择器
+    const submitScript = `
+        (function() {
+            function simulateClick(el) {
+                if (!el) return false;
+                const rect = el.getBoundingClientRect();
+                const x = rect.left + rect.width / 2;
+                const y = rect.top + rect.height / 2;
+                const opts = { bubbles: true, cancelable: true, view: window, clientX: x, clientY: y };
+                try { el.dispatchEvent(new MouseEvent('mousedown', opts)); } catch (e) {}
+                try { el.dispatchEvent(new MouseEvent('mouseup', opts)); } catch (e) {}
+                try { el.dispatchEvent(new MouseEvent('click', opts)); } catch (e) {}
+                try {
+                    const touch = new Touch({ identifier: Date.now(), target: el, clientX: x, clientY: y, pageX: x, pageY: y, radiusX: 1, radiusY: 1, rotationAngle: 0, force: 1 });
+                    el.dispatchEvent(new TouchEvent('touchstart', { bubbles: true, cancelable: true, touches: [touch], targetTouches: [touch], changedTouches: [touch] }));
+                    el.dispatchEvent(new TouchEvent('touchend', { bubbles: true, cancelable: true, touches: [], targetTouches: [], changedTouches: [touch] }));
+                } catch (e) {}
+                try { el.click(); } catch (e) {}
+                return true;
+            }
+            ${findModalSnippet}
+            const modal = findQuizModal();
+            const root = modal || document;
+            let cands = Array.from(root.querySelectorAll('button, uni-button, [class*="button"], [class*="btn"], uni-view, view, div, span'))
+                .filter(el => ((el.innerText || '').trim()).indexOf('提交') !== -1);
+            // 去掉嵌套的外层，只留最内层
+            cands = cands.filter(el => !cands.some(o => o !== el && o.contains(el)));
+            // 文本恰好是「提交」的优先，否则取文本最短者（即按钮本体）
+            cands.sort((a, b) => {
+                const ta = (a.innerText || '').trim(), tb = (b.innerText || '').trim();
+                const ea = ta === '提交' ? 0 : 1, eb = tb === '提交' ? 0 : 1;
+                if (ea !== eb) return ea - eb;
+                return ta.length - tb.length;
+            });
+            let target = cands[0] || document.querySelector('.popup_content .button');
+            if (!target) {
+                const buttons = Array.from(root.querySelectorAll('button, uni-button, [class*="button"], [class*="btn"]')).slice(0, 8)
+                    .map(el => ({ cls: String(el.className).slice(0, 60), text: ((el.innerText || '').trim()).slice(0, 30) }));
+                return { ok: false, reason: 'not-found', buttons: buttons };
+            }
+            simulateClick(target);
+            return { ok: true, tag: target.tagName, cls: String(target.className).slice(0, 60), text: ((target.innerText || '').trim()).slice(0, 30) };
+        })()
+    `;
+
     logger.info(`[Execute Task] 答题: 共 ${answerList.length} 个答案，答题间隔 ${intervalSec} 秒`);
     // 进度：本步骤已按 1 个普通步骤计数，其余题目数补入工作单元
     taskControl.addProgressTotal(Math.max(0, answerList.length - 1), '答题中');
 
     let answeredCount = 0;
-    for (let i = 0; i < answerList.length; i++) {
+    let i = 0;
+    let retries = 0;
+    while (i < answerList.length) {
         await taskControl.checkpoint(runId);
 
         const opened = await webContents.executeJavaScript(openNextScript).catch(err => ({ error: err && err.message }));
@@ -764,54 +815,130 @@ async function answerQuiz(webContents, step, runId) {
                     }
                 }
 
-                // 验证是否真正出现选中态 .option.on，没有则尝试点击目标内部的 .text
-                let selected = Array.from(modal.querySelectorAll('.option.on')).map(o => (o.innerText || '').trim());
-                if (selected.length === 0 && clicked.length > 0) {
-                    for (const L of letters) {
-                        const target = options.find(opt => optionPattern().test((opt.innerText || '').trim()) && (opt.innerText || '').trim().charAt(0) === L);
-                        if (target) {
-                            const text = target.querySelector('.text, .text-black, span');
-                            if (text) simulatePointer(text);
-                        }
-                    }
-                    selected = Array.from(modal.querySelectorAll('.option.on')).map(o => (o.innerText || '').trim());
-                }
-
                 if (clicked.length === 0) {
-                    return { ok: false, reason: 'no-match', texts: optionTexts, selected: selected };
+                    return { ok: false, reason: 'no-match', texts: optionTexts };
                 }
-                return { ok: true, clicked: clicked, elements: clickedEls, count: options.length, selected: selected };
+                return { ok: true, clicked: clicked, elements: clickedEls, count: options.length };
             })()
         `;
         const picked = await webContents.executeJavaScript(pickScript).catch(err => ({ error: err && err.message }));
         if (!picked || picked.error || !picked.ok) {
-            logger.warn(`[Execute Task] 答题: 第 ${opened.index} 题未匹配到选项 ${letters.join(',')}（原因: ${picked ? picked.reason : 'exception'}，识别到的选项: ${picked && picked.texts ? picked.texts.join(' | ') : '无'}，已选中: ${picked && picked.selected ? picked.selected.join(' | ') : '无'}），停止答题（避免答案错位）`);
+            logger.warn(`[Execute Task] 答题: 第 ${opened.index} 题未匹配到选项 ${letters.join(',')}（原因: ${picked ? picked.reason : 'exception'}，识别到的选项: ${picked && picked.texts ? picked.texts.join(' | ') : '无'}），停止答题（避免答案错位）`);
             break;
         }
-        logger.info(`[Execute Task] 答题: 第 ${opened.index} 题已选 ${picked.clicked.join(',')}（元素: ${picked.elements.join(', ')}，选项总数: ${picked.count}，已选中态: ${picked.selected ? picked.selected.join(' | ') : '无'}）`);
+
+        // 轮询确认选中态（页面框架异步渲染，同步读取会漏判）
+        const selCheckScript = `
+            (function() {
+                ${findModalSnippet}
+                const modal = findQuizModal();
+                if (!modal) return false;
+                const letters = ${JSON.stringify(letters)};
+                const onEls = Array.from(modal.querySelectorAll('.option.on'));
+                if (onEls.length === 0) return false;
+                const texts = onEls.map(e => (e.innerText || '').trim());
+                return letters.every(L => texts.some(t => t.charAt(0) === L));
+            })()
+        `;
+        let selOk = await quizPollTrue(webContents, runId, selCheckScript, 3000);
+        if (!selOk) {
+            // 点击选项内部的 .text 再试一次
+            const retryTextScript = `
+                (function() {
+                    function simulatePointer(el) {
+                        if (!el) return;
+                        const rect = el.getBoundingClientRect();
+                        const x = rect.left + rect.width / 2;
+                        const y = rect.top + rect.height / 2;
+                        const mouseOpts = { bubbles: true, cancelable: true, view: window, clientX: x, clientY: y };
+                        try { el.dispatchEvent(new MouseEvent('mousedown', mouseOpts)); } catch (e) {}
+                        try { el.dispatchEvent(new MouseEvent('mouseup', mouseOpts)); } catch (e) {}
+                        try { el.dispatchEvent(new MouseEvent('click', mouseOpts)); } catch (e) {}
+                        try {
+                            const touch = new Touch({ identifier: Date.now(), target: el, clientX: x, clientY: y, pageX: x, pageY: y, radiusX: 1, radiusY: 1, rotationAngle: 0, force: 1 });
+                            el.dispatchEvent(new TouchEvent('touchstart', { bubbles: true, cancelable: true, touches: [touch], targetTouches: [touch], changedTouches: [touch] }));
+                            el.dispatchEvent(new TouchEvent('touchend', { bubbles: true, cancelable: true, touches: [], targetTouches: [], changedTouches: [touch] }));
+                        } catch (e) {}
+                        try { el.click(); } catch (e) {}
+                    }
+                    const letters = ${JSON.stringify(letters)};
+                    ${findModalSnippet}
+                    const modal = findQuizModal();
+                    if (!modal) return 0;
+                    let n = 0;
+                    for (const L of letters) {
+                        const opts = Array.from(modal.querySelectorAll('.option'));
+                        const target = opts.find(opt => optionPattern().test((opt.innerText || '').trim()) && (opt.innerText || '').trim().charAt(0) === L);
+                        if (target) {
+                            const text = target.querySelector('.text, .text-black, span');
+                            if (text) { simulatePointer(text); n++; }
+                        }
+                    }
+                    return n;
+                })()
+            `;
+            await webContents.executeJavaScript(retryTextScript).catch(() => 0);
+            selOk = await quizPollTrue(webContents, runId, selCheckScript, 3000);
+        }
+        if (!selOk) {
+            const selDiagScript = `
+                (function() {
+                    ${findModalSnippet}
+                    const modal = findQuizModal();
+                    if (!modal) return { modal: false };
+                    return { modal: true, selected: Array.from(modal.querySelectorAll('.option.on')).map(o => (o.innerText || '').trim()).slice(0, 5) };
+                })()
+            `;
+            const selDiag = await webContents.executeJavaScript(selDiagScript).catch(() => null);
+            logger.warn(`[Execute Task] 答题: 第 ${opened.index} 题选项点击未生效（预期 ${letters.join(',')}，实际选中: ${selDiag && selDiag.selected ? selDiag.selected.join(' | ') : '无'}），停止答题（避免答案错位）`);
+            break;
+        }
+        logger.info(`[Execute Task] 答题: 第 ${opened.index} 题已选 ${picked.clicked.join(',')}（元素: ${picked.elements.join(', ')}，选项总数: ${picked.count}，选中态已确认）`);
 
         // 给页面一点反应时间，再点击提交
         await taskControl.wait(800, runId);
 
-        // 提交答案
-        const submitResult = await webContents.executeJavaScript(clickScriptFor('.popup_content .button', '提交')).catch(err => ({ error: err && err.message }));
+        // 提交答案（按文字「提交」匹配，避免点中弹窗内其他按钮）
+        const submitResult = await webContents.executeJavaScript(submitScript).catch(err => ({ error: err && err.message }));
         if (!submitResult || submitResult.error || !submitResult.ok) {
-            logger.warn(`[Execute Task] 答题: 第 ${opened.index} 题提交按钮不可用，停止答题（避免答案错位）`);
+            logger.warn(`[Execute Task] 答题: 第 ${opened.index} 题提交按钮不可用，停止答题（避免答案错位）。诊断: ${JSON.stringify(submitResult || null)}`);
             break;
         }
-        logger.info(`[Execute Task] 答题: 第 ${opened.index} 题已点击提交`);
+        logger.info(`[Execute Task] 答题: 第 ${opened.index} 题已点击提交（${submitResult.tag}.${submitResult.cls}，文本: ${submitResult.text}）`);
 
-        // 等待弹窗关闭（关闭失败不致命，仅记录）
+        // 等待答题弹窗关闭（关闭失败不致命，仅记录）
         const closed = await quizPollTrue(webContents, runId, modalClosedScript, 8000);
         if (!closed) {
             logger.warn(`[Execute Task] 答题: 第 ${opened.index} 题提交后弹窗未关闭，继续下一题`);
         }
 
+        // 验证该题已出现「已答」标记；未生效则重试本题（不消耗下一个答案，避免错位）
+        const answeredCheckScript = `
+            (function() {
+                const items = document.querySelectorAll('.main .nav');
+                const el = items[${opened.index - 1}];
+                return !!(el && el.querySelector('.uni-checkmarkempty'));
+            })()
+        `;
+        const verified = await webContents.executeJavaScript(answeredCheckScript).catch(() => false);
+        if (!verified) {
+            retries++;
+            if (retries > 2) {
+                logger.warn(`[Execute Task] 答题: 第 ${opened.index} 题提交未生效（题目仍未标记已答），已重试 ${retries - 1} 次仍失败，停止答题`);
+                break;
+            }
+            logger.warn(`[Execute Task] 答题: 第 ${opened.index} 题提交未生效（题目仍未标记已答），重试本题（不消耗下一个答案）`);
+            await taskControl.wait(1500, runId);
+            continue; // i 不变，重试本题
+        }
+        retries = 0;
+
         answeredCount++;
-        logger.info(`[Execute Task] 答题 [${i + 1}/${answerList.length}] 第 ${opened.index} 题 已选 ${picked.clicked.join(',')} 并提交`);
+        logger.info(`[Execute Task] 答题 [${i + 1}/${answerList.length}] 第 ${opened.index} 题 已选 ${picked.clicked.join(',')} 并提交（已确认生效）`);
         taskControl.tickProgress(1, `答题 ${i + 1}/${answerList.length}`);
 
-        if (i < answerList.length - 1) {
+        i++;
+        if (i < answerList.length) {
             await taskControl.wait(intervalSec * 1000, runId);
         }
     }
