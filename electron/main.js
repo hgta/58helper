@@ -671,51 +671,73 @@ async function answerQuiz(webContents, step, runId) {
         }
         const pickScript = `
             (function() {
+                function simulatePointer(el) {
+                    if (!el) return;
+                    const rect = el.getBoundingClientRect();
+                    const x = rect.left + rect.width / 2;
+                    const y = rect.top + rect.height / 2;
+                    const mouseOpts = { bubbles: true, cancelable: true, view: window, clientX: x, clientY: y };
+                    try { el.dispatchEvent(new MouseEvent('mousedown', mouseOpts)); } catch (e) {}
+                    try { el.dispatchEvent(new MouseEvent('mouseup', mouseOpts)); } catch (e) {}
+                    try { el.dispatchEvent(new MouseEvent('click', mouseOpts)); } catch (e) {}
+                    try {
+                        const touch = new Touch({ identifier: Date.now(), target: el, clientX: x, clientY: y, pageX: x, pageY: y, radiusX: 1, radiusY: 1, rotationAngle: 0, force: 1 });
+                        el.dispatchEvent(new TouchEvent('touchstart', { bubbles: true, cancelable: true, touches: [touch], targetTouches: [touch], changedTouches: [touch] }));
+                        el.dispatchEvent(new TouchEvent('touchend', { bubbles: true, cancelable: true, touches: [], targetTouches: [], changedTouches: [touch] }));
+                    } catch (e) {}
+                    try { el.click(); } catch (e) {}
+                }
+
                 const letters = ${JSON.stringify(letters)};
                 const modal = document.querySelector('.popup_content.learnanswer');
                 if (!modal) return { ok: false, reason: 'no-modal', texts: [] };
+
                 // 优先找 .option 元素；找不到再扫描所有元素
                 let options = Array.from(modal.querySelectorAll('.option'));
                 if (options.length === 0) {
-                    options = Array.from(modal.querySelectorAll('uni-view, view, div, button')).filter(el => {
-                        const t = (el.innerText || '').trim();
-                        return /^[A-D]、/.test(t);
-                    });
+                    options = Array.from(modal.querySelectorAll('uni-view, view, div, button')).filter(el => /^[A-D]、/.test((el.innerText || '').trim()));
                 }
                 const optionTexts = options.map(o => (o.innerText || '').trim()).filter((v, i, a) => a.indexOf(v) === i);
+
                 const clicked = [];
                 const clickedEls = [];
                 for (const L of letters) {
                     const target = options.find(opt => (opt.innerText || '').trim().startsWith(L + '、'));
                     if (target) {
-                        // 点击 .option 本身，不点文本 span
-                        const rect = target.getBoundingClientRect();
-                        const x = rect.left + rect.width / 2;
-                        const y = rect.top + rect.height / 2;
-                        const opts = { bubbles: true, cancelable: true, view: window, clientX: x, clientY: y };
-                        try { target.dispatchEvent(new MouseEvent('mousedown', opts)); } catch (e) {}
-                        try { target.dispatchEvent(new MouseEvent('mouseup', opts)); } catch (e) {}
-                        try { target.dispatchEvent(new MouseEvent('click', opts)); } catch (e) {}
-                        try { target.click(); } catch (e) {}
+                        simulatePointer(target);
                         clicked.push(L);
                         clickedEls.push(target.className || target.tagName);
                     }
                 }
-                if (clicked.length === 0) {
-                    return { ok: false, reason: 'no-match', texts: optionTexts };
+
+                // 验证是否真正出现选中态 .option.on，没有则尝试点击目标内部的 .text
+                let selected = Array.from(modal.querySelectorAll('.option.on')).map(o => (o.innerText || '').trim());
+                if (selected.length === 0 && clicked.length > 0) {
+                    for (const L of letters) {
+                        const target = options.find(opt => (opt.innerText || '').trim().startsWith(L + '、'));
+                        if (target) {
+                            const text = target.querySelector('.text, .text-black, span');
+                            if (text) simulatePointer(text);
+                        }
+                    }
+                    selected = Array.from(modal.querySelectorAll('.option.on')).map(o => (o.innerText || '').trim());
                 }
-                return { ok: true, clicked: clicked, elements: clickedEls };
+
+                if (clicked.length === 0) {
+                    return { ok: false, reason: 'no-match', texts: optionTexts, selected: selected };
+                }
+                return { ok: true, clicked: clicked, elements: clickedEls, count: options.length, selected: selected };
             })()
         `;
         const picked = await webContents.executeJavaScript(pickScript).catch(err => ({ error: err && err.message }));
         if (!picked || picked.error || !picked.ok) {
-            logger.warn(`[Execute Task] 答题: 第 ${opened.index} 题未匹配到选项 ${letters.join(',')}（原因: ${picked ? picked.reason : 'exception'}，识别到的选项: ${picked && picked.texts ? picked.texts.join(' | ') : '无'}），停止答题（避免答案错位）`);
+            logger.warn(`[Execute Task] 答题: 第 ${opened.index} 题未匹配到选项 ${letters.join(',')}（原因: ${picked ? picked.reason : 'exception'}，识别到的选项: ${picked && picked.texts ? picked.texts.join(' | ') : '无'}，已选中: ${picked && picked.selected ? picked.selected.join(' | ') : '无'}），停止答题（避免答案错位）`);
             break;
         }
-        logger.info(`[Execute Task] 答题: 第 ${opened.index} 题已选 ${picked.clicked.join(',')}（元素: ${picked.elements.join(', ')}）`);
+        logger.info(`[Execute Task] 答题: 第 ${opened.index} 题已选 ${picked.clicked.join(',')}（元素: ${picked.elements.join(', ')}，选项总数: ${picked.count}，已选中态: ${picked.selected ? picked.selected.join(' | ') : '无'}）`);
 
         // 给页面一点反应时间，再点击提交
-        await taskControl.wait(500, runId);
+        await taskControl.wait(800, runId);
 
         // 提交答案
         const submitResult = await webContents.executeJavaScript(clickScriptFor('.popup_content .button', '提交')).catch(err => ({ error: err && err.message }));
@@ -731,7 +753,6 @@ async function answerQuiz(webContents, step, runId) {
             logger.warn(`[Execute Task] 答题: 第 ${opened.index} 题提交后弹窗未关闭，继续下一题`);
         }
 
-        answeredCount++;
         answeredCount++;
         logger.info(`[Execute Task] 答题 [${i + 1}/${answerList.length}] 第 ${opened.index} 题 已选 ${picked.clicked.join(',')} 并提交`);
         taskControl.tickProgress(1, `答题 ${i + 1}/${answerList.length}`);
