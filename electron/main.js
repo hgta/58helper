@@ -531,6 +531,154 @@ async function clickFirstMatch(webContents, step, runId) {
     }
 }
 
+// 轮询页面脚本直到返回真值 / 超时（返回 false 表示超时；被停止时由 taskControl.wait 抛出）
+async function quizPollTrue(webContents, runId, script, timeoutMs) {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+        await taskControl.wait(400, runId);
+        if (webContents.isDestroyed()) return false;
+        const ok = await webContents.executeJavaScript(script).catch(() => false);
+        if (ok) return true;
+    }
+    return false;
+}
+
+// 答题模式：按预设答案列表逐题作答（跳过带对勾标记的已答题项），
+// 答完后由外层 handleConfirmBox 关闭「恭喜领取」成功弹窗。
+async function answerQuiz(webContents, step, runId) {
+    const answerList = (Array.isArray(step.answer_list) ? step.answer_list : [])
+        .map(s => String(s).trim().toUpperCase())
+        .filter(s => s);
+    if (answerList.length === 0) {
+        logger.warn('[Execute Task] 答题: 答案列表为空，跳过答题');
+        return;
+    }
+    const intervalSec = Number(step.answer_interval) > 0 ? Number(step.answer_interval) : 2;
+
+    // 打开第一个未答题项（题项内含 .uni-checkmarkempty 视为已答）
+    const openNextScript = `
+        (function() {
+            const items = Array.from(document.querySelectorAll('.main .nav'));
+            for (let i = 0; i < items.length; i++) {
+                const el = items[i];
+                if (el.querySelector('.uni-checkmarkempty')) continue;
+                try { el.scrollIntoView({ block: 'center' }); } catch (e) {}
+                try { el.click(); } catch (e) {}
+                return { found: true, index: i + 1, total: items.length };
+            }
+            return { found: false, total: items.length };
+        })()
+    `;
+
+    // 答题弹窗是否出现（可见且含选项）
+    const modalVisibleScript = `
+        (function() {
+            const modal = document.querySelector('.popup_content.learnanswer');
+            if (!modal) return false;
+            const r = modal.getBoundingClientRect();
+            if (r.width <= 0 || r.height <= 0) return false;
+            return modal.querySelectorAll('.option').length > 0;
+        })()
+    `;
+
+    // 答题弹窗是否已关闭
+    const modalClosedScript = `
+        (function() {
+            const modal = document.querySelector('.popup_content.learnanswer');
+            if (!modal) return true;
+            const r = modal.getBoundingClientRect();
+            return r.width <= 0 || r.height <= 0;
+        })()
+    `;
+
+    // 点击提交按钮
+    const submitScript = `
+        (function() {
+            const btn = document.querySelector('.popup_content .button');
+            if (!btn) return { ok: false };
+            const r = btn.getBoundingClientRect();
+            if (r.width <= 0 || r.height <= 0) return { ok: false };
+            try { btn.click(); } catch (e) { return { ok: false }; }
+            return { ok: true };
+        })()
+    `;
+
+    logger.info(`[Execute Task] 答题: 共 ${answerList.length} 个答案，答题间隔 ${intervalSec} 秒`);
+    // 进度：本步骤已按 1 个普通步骤计数，其余题目数补入工作单元
+    taskControl.addProgressTotal(Math.max(0, answerList.length - 1), '答题中');
+
+    let answeredCount = 0;
+    for (let i = 0; i < answerList.length; i++) {
+        await taskControl.checkpoint(runId);
+
+        const opened = await webContents.executeJavaScript(openNextScript).catch(() => null);
+        if (!opened || !opened.found) {
+            logger.info(`[Execute Task] 答题: 页面无未答题项（共 ${opened ? opened.total : '?'} 题），答题结束`);
+            break;
+        }
+
+        // 等待答题弹窗出现
+        await taskControl.wait(600, runId);
+        const modalOk = await quizPollTrue(webContents, runId, modalVisibleScript, 10000);
+        if (!modalOk) {
+            logger.warn(`[Execute Task] 答题: 第 ${opened.index} 题弹窗未出现，停止答题（避免答案错位）`);
+            break;
+        }
+
+        // 选择答案对应的选项（按选项文本前缀字母匹配，支持多选 A,B / AB）
+        const letters = answerList[i].replace(/[^A-D]/g, '').split('');
+        if (letters.length === 0) {
+            logger.warn(`[Execute Task] 答题: 答案 "${answerList[i]}" 无有效字母，停止答题`);
+            break;
+        }
+        const pickScript = `
+            (function() {
+                const letters = ${JSON.stringify(letters)};
+                const options = Array.from(document.querySelectorAll('.popup_content .option'));
+                const clicked = [];
+                for (const L of letters) {
+                    const target = options.find(opt => {
+                        const t = (opt.innerText || '').trim();
+                        return t.startsWith(L + '、') || t.startsWith(L + '.') || t.startsWith(L + ' ') || t === L;
+                    });
+                    if (target) { try { target.click(); } catch (e) {} clicked.push(L); }
+                }
+                if (clicked.length === 0) {
+                    return { ok: false, texts: options.map(o => (o.innerText || '').trim()) };
+                }
+                return { ok: true, clicked: clicked };
+            })()
+        `;
+        const picked = await webContents.executeJavaScript(pickScript).catch(() => null);
+        if (!picked || !picked.ok) {
+            logger.warn(`[Execute Task] 答题: 第 ${opened.index} 题未匹配到选项 ${letters.join(',')}（选项: ${picked && picked.texts ? picked.texts.join(' | ') : '无'}），停止答题（避免答案错位）`);
+            break;
+        }
+
+        // 提交答案
+        const submitted = await webContents.executeJavaScript(submitScript).catch(() => null);
+        if (!submitted || !submitted.ok) {
+            logger.warn(`[Execute Task] 答题: 第 ${opened.index} 题提交按钮不可用，停止答题（避免答案错位）`);
+            break;
+        }
+
+        // 等待弹窗关闭（关闭失败不致命，仅记录）
+        const closed = await quizPollTrue(webContents, runId, modalClosedScript, 8000);
+        if (!closed) {
+            logger.warn(`[Execute Task] 答题: 第 ${opened.index} 题提交后弹窗未关闭，继续下一题`);
+        }
+
+        answeredCount++;
+        logger.info(`[Execute Task] 答题 [${i + 1}/${answerList.length}] 第 ${opened.index} 题 已选 ${picked.clicked.join(',')} 并提交`);
+        taskControl.tickProgress(1, `答题 ${i + 1}/${answerList.length}`);
+
+        if (i < answerList.length - 1) {
+            await taskControl.wait(intervalSec * 1000, runId);
+        }
+    }
+    logger.info(`[Execute Task] 答题: 完成，共提交 ${answeredCount} 题`);
+}
+
 // 在指定 webContents 上执行单个步骤：加载页面 → 稳定等待 → 点击/轮询 → 确认框
 async function runStepInWebContents(webContents, step, runId) {
     await taskControl.checkpoint(runId);
@@ -566,6 +714,14 @@ async function runStepInWebContents(webContents, step, runId) {
     // 等待页面稳定
     await taskControl.wait(3000, runId);
     logger.info(`[Execute Task] 页面加载完成: ${step.url}`);
+
+    // 答题模式：按预设答案自动答题，答完后由确认框逻辑关闭成功弹窗
+    if (step.is_answer_mode) {
+        logger.info(`[Execute Task] 答题模式: ${step.url}`);
+        await answerQuiz(webContents, step, runId);
+        await handleConfirmBox(webContents, step.confirm_selectors || [], runId);
+        return;
+    }
 
     // 点击按钮
     const buttonSelectors = step.button_selectors || [];

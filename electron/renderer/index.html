@@ -890,9 +890,21 @@
                     <label>网页地址</label>
                     <input type="url" id="step-url" required placeholder="https://example.com">
                 </div>
-                <div class="form-group">
+                <div class="form-group" id="step-selectors-group">
                     <label>按钮选择器（每行一个，可选）</label>
                     <textarea id="step-selectors" placeholder=".btn-submit&#10;#submit-btn"></textarea>
+                </div>
+                <div class="form-group">
+                    <label style="display: inline-flex; align-items: flex-start; gap: 6px; cursor: pointer; white-space: nowrap;">
+                        <input type="checkbox" id="step-answer-mode">
+                        此步骤为答题模式（按预设答案自动选题提交）
+                    </label>
+                </div>
+                <div class="form-group" id="answer-mode-group" style="display: none;">
+                    <label>答案列表（每行一个，支持 B / A,B / AB）</label>
+                    <textarea id="step-answer-list" placeholder="B&#10;C&#10;C&#10;A" style="height: 120px;"></textarea>
+                    <label>答题间隔（秒）</label>
+                    <input type="number" id="step-answer-interval" value="2" min="1">
                 </div>
                 <div class="form-group">
                     <label style="display: inline-flex; align-items: flex-start; gap: 6px; cursor: pointer; white-space: nowrap;">
@@ -996,6 +1008,9 @@
 
             // 全局唯一计数勾选联动：切换局部分批 / 全局分批输入框
             document.getElementById('step-iterate-global').addEventListener('change', updateBatchGroupVisibility);
+
+            // 答题模式勾选联动：勾选后隐藏按钮选择器 / 轮询配置，显示答案配置
+            document.getElementById('step-answer-mode').addEventListener('change', updateAnswerModeVisibility);
 
             
             // 窗口控制
@@ -1675,11 +1690,13 @@
                     </div>
                     <div class="step-url">${step.url}</div>
                     <div class="step-selectors">
-                        ${step.button_selectors?.length ? '按钮: ' + step.button_selectors.join(', ') : ''}
-                        ${step.confirm_selectors?.length ? ' | 确认: ' + step.confirm_selectors.join(', ') : ''}
-                        ${step.iterate_all ? ` | 🔁 轮询所有(间隔${step.iterate_interval || 10}s${step.iterate_global_unique_count ? (step.iterate_global_batch_size ? `, 全局${step.iterate_global_batch_size}/休息${step.iterate_global_batch_interval || 60}s` : '') : (step.iterate_batch_size ? `, 分批${step.iterate_batch_size}/休息${step.iterate_batch_interval || 60}s` : '')})` : ''}
-                        ${step.iterate_open_tabs ? ' | 🔀 新标签页' : ''}
-                        ${!step.button_selectors?.length && !step.confirm_selectors?.length ? '无按钮操作' : ''}
+                        ${step.is_answer_mode ? `📝 答题模式（${(step.answer_list || []).length} 题，间隔${step.answer_interval || 2}s）` : ''}
+                        ${step.is_answer_mode ? '' : (step.button_selectors?.length ? '按钮: ' + step.button_selectors.join(', ') : '')}
+                        ${!step.is_answer_mode && step.confirm_selectors?.length ? ' | 确认: ' + step.confirm_selectors.join(', ') : ''}
+                        ${step.is_answer_mode && step.confirm_selectors?.length ? '确认: ' + step.confirm_selectors.join(', ') : ''}
+                        ${step.is_answer_mode ? '' : (step.iterate_all ? ` | 🔁 轮询所有(间隔${step.iterate_interval || 10}s${step.iterate_global_unique_count ? (step.iterate_global_batch_size ? `, 全局${step.iterate_global_batch_size}/休息${step.iterate_global_batch_interval || 60}s` : '') : (step.iterate_batch_size ? `, 分批${step.iterate_batch_size}/休息${step.iterate_batch_interval || 60}s` : '')})` : '')}
+                        ${step.is_answer_mode ? '' : (step.iterate_open_tabs ? ' | 🔀 新标签页' : '')}
+                        ${!step.is_answer_mode && !step.button_selectors?.length && !step.confirm_selectors?.length ? '无按钮操作' : ''}
                     </div>
                 </div>
             `).join('');
@@ -1693,6 +1710,21 @@
                 iterateAll && !globalMode ? 'block' : 'none';
             document.getElementById('batch-global-group').style.display =
                 globalMode ? 'block' : 'none';
+        }
+
+        // 答题模式 UI 显隐控制（addStep / editStep / 勾选联动均会调用）
+        function updateAnswerModeVisibility() {
+            const answerMode = document.getElementById('step-answer-mode').checked;
+            document.getElementById('answer-mode-group').style.display = answerMode ? 'block' : 'none';
+            // 答题模式下隐藏与答题无关的普通点击 / 轮询配置
+            document.getElementById('step-selectors-group').style.display = answerMode ? 'none' : 'block';
+            document.getElementById('step-iterate-all').closest('.form-group').style.display = answerMode ? 'none' : 'block';
+            if (answerMode) {
+                // 答题模式不含轮询语义，强制收起轮询子配置
+                document.getElementById('iterate-interval-group').style.display = 'none';
+                document.getElementById('iterate-start-group').style.display = 'none';
+                document.getElementById('iterate-global-group').style.display = 'none';
+            }
         }
 
         // 添加步骤
@@ -1712,10 +1744,15 @@
             document.getElementById('step-iterate-global-interval').value = 60;
             // 新建步骤默认勾选裂变（旧步骤编辑时按实际字段回填，不静默启用）
             document.getElementById('step-iterate-open-tabs').checked = true;
+            // 答题模式：新建步骤默认关闭，重置答案配置
+            document.getElementById('step-answer-mode').checked = false;
+            document.getElementById('step-answer-list').value = '';
+            document.getElementById('step-answer-interval').value = 2;
             document.getElementById('iterate-interval-group').style.display = 'none';
             document.getElementById('iterate-start-group').style.display = 'none';
             document.getElementById('iterate-global-group').style.display = 'none';
             updateBatchGroupVisibility();
+            updateAnswerModeVisibility();
             document.getElementById('step-modal-title').textContent = '添加步骤';
             document.getElementById('step-modal').classList.add('show');
         }
@@ -1739,10 +1776,15 @@
             document.getElementById('step-iterate-global-interval').value = step.iterate_global_batch_interval || '';
             // 裂变开关：仅显式为 true 时勾选（旧步骤无字段 → 不勾选，保持原有行为）
             document.getElementById('step-iterate-open-tabs').checked = step.iterate_open_tabs === true;
+            // 答题模式：回填答案列表与间隔
+            document.getElementById('step-answer-mode').checked = step.is_answer_mode === true;
+            document.getElementById('step-answer-list').value = (step.answer_list || []).join('\n');
+            document.getElementById('step-answer-interval').value = step.answer_interval || 2;
             document.getElementById('iterate-interval-group').style.display = step.iterate_all ? 'block' : 'none';
             document.getElementById('iterate-start-group').style.display = step.iterate_all ? 'block' : 'none';
             document.getElementById('iterate-global-group').style.display = step.iterate_all ? 'block' : 'none';
             updateBatchGroupVisibility();
+            updateAnswerModeVisibility();
             document.getElementById('step-modal-title').textContent = '编辑步骤';
             document.getElementById('step-modal').classList.add('show');
         }
@@ -1757,11 +1799,40 @@
         document.getElementById('step-form').addEventListener('submit', (e) => {
             e.preventDefault();
             const url = document.getElementById('step-url').value.trim();
-            const button_selectors = document.getElementById('step-selectors').value
+            const confirm_selectors = document.getElementById('step-confirm-selectors').value
                 .split('\n')
                 .map(s => s.trim())
                 .filter(s => s);
-            const confirm_selectors = document.getElementById('step-confirm-selectors').value
+
+            // 答题模式步骤：只带 url / 确认框 / 答案配置，不带按钮选择器与轮询字段
+            if (document.getElementById('step-answer-mode').checked) {
+                const answer_list = document.getElementById('step-answer-list').value
+                    .split('\n')
+                    .map(s => s.trim().toUpperCase())
+                    .filter(s => s);
+                if (answer_list.length === 0) {
+                    addLog('答题模式需要至少一个答案', 'error');
+                    return;
+                }
+                const answer_interval = parseInt(document.getElementById('step-answer-interval').value, 10);
+                const step = {
+                    url,
+                    confirm_selectors,
+                    is_answer_mode: true,
+                    answer_list,
+                    answer_interval: (Number.isInteger(answer_interval) && answer_interval > 0) ? answer_interval : 2
+                };
+                if (editingStepIndex === -1) {
+                    currentSteps.push(step);
+                } else {
+                    currentSteps[editingStepIndex] = step;
+                }
+                document.getElementById('step-modal').classList.remove('show');
+                renderSteps();
+                return;
+            }
+
+            const button_selectors = document.getElementById('step-selectors').value
                 .split('\n')
                 .map(s => s.trim())
                 .filter(s => s);
