@@ -593,17 +593,13 @@ async function answerQuiz(webContents, step, runId) {
     }
 
     // 已答/未答判定（各脚本共用）：
-    // uni-app 图标库中 .uni-checkmarkfilled 是实心勾=已答，.uni-checkmarkempty 是空心勾=未答
+    // 已答/未答判定（各脚本共用）：
+    // 实测：已答题项显示勾图标（class 含 checkmark，如 uniui-checkmarkempty），
+    // 未答题项完全没有勾图标。图标名带 empty 只是 uni-ui 图标命名，渲染出来就是勾。
     const isAnsweredSnippet = `
         function isAnsweredItem(el) {
             if (!el) return false;
-            if (el.querySelector('.uni-checkmarkfilled, [class*="checkmarkfilled"], [class*="checkmark_filled"]')) return true;
-            if (el.querySelector('[class*="checkmark"]')) {
-                // 只含空心勾 → 未答
-                const marks = Array.from(el.querySelectorAll('[class*="checkmark"]'));
-                return marks.some(m => !/empty/i.test(String(m.className)));
-            }
-            return false;
+            return !!el.querySelector('[class*="checkmark"]');
         }
     `;
 
@@ -773,13 +769,21 @@ async function answerQuiz(webContents, step, runId) {
             ${findModalSnippet}
             const modal = findQuizModal();
             const root = modal || document;
+            const modalText = ((root.innerText || '').trim());
+
+            function innermost(list) {
+                return list.filter(el => !list.some(o => o !== el && o.contains(el)));
+            }
+
             // 在所有后代元素里找含「提交」的元素，保留最内层
-            let cands = Array.from(root.querySelectorAll('*')).filter(el => {
+            let cands = innermost(Array.from(root.querySelectorAll('*')).filter(el => {
                 const t = (el.innerText || '').trim();
                 return t && t.indexOf('提交') !== -1;
-            });
-            cands = cands.filter(el => !cands.some(o => o !== el && o.contains(el)));
+            }));
+            // 按钮本体的文本应该很短；文本很长说明匹配到的是包着题目的大容器（按钮文字不含「提交」）
+            cands = cands.filter(el => ((el.innerText || '').trim()).length <= 10);
             let target = null;
+            let via = '';
             if (cands.length > 0) {
                 // 文本恰好是「提交」的优先，否则取文本最短者（即按钮本体）
                 cands.sort((a, b) => {
@@ -789,25 +793,53 @@ async function answerQuiz(webContents, step, runId) {
                     return ta.length - tb.length;
                 });
                 target = cands[0];
-            } else {
-                // 回退：短文本「确定 / 确认」（长度限制避免匹配到题目正文）
-                let alt = Array.from(root.querySelectorAll('*')).filter(el => {
-                    const t = (el.innerText || '').trim();
-                    return t && t.length <= 4 && /^(确定|确认|提交答案|Submit)$/i.test(t);
-                });
-                alt = alt.filter(el => !alt.some(o => o !== el && o.contains(el)));
-                if (alt.length > 0) target = alt[alt.length - 1];
+                via = 'text:提交';
             }
             if (!target) {
-                // 找不到提交按钮：输出弹窗文本尾部，便于确认真实按钮文字
-                const text = ((root.innerText || '').trim());
-                return { ok: false, reason: 'not-found', modalTextTail: text.slice(-160) };
+                // 回退 1：常见短文本按钮（确定/确认/OK 等）
+                let alt = innermost(Array.from(root.querySelectorAll('*')).filter(el => {
+                    const t = (el.innerText || '').trim();
+                    return t && t.length <= 6 && /^(确定|确认|提交答案|OK|SUBMIT)$/i.test(t);
+                }));
+                if (alt.length > 0) { target = alt[alt.length - 1]; via = 'text:确定/确认'; }
+            }
+            if (!target) {
+                // 回退 2：弹窗内非题目文本的短文本元素里，取位于弹窗最底部、最靠右的
+                // （答题弹窗的提交按钮通常在底部；回顾弹窗没有按钮则找不到，正好用于区分）
+                const mRect = root.getBoundingClientRect();
+                let shorts = innermost(Array.from(root.querySelectorAll('uni-view, view, div, span, button, uni-button, uni-text, p, a')).filter(el => {
+                    if (!el.childElementCount) {
+                        const t = (el.innerText || '').trim();
+                        const r = el.getBoundingClientRect();
+                        return t && t.length >= 1 && t.length <= 8
+                            && r.width > 0 && r.height > 0
+                            && !/^[A-D][、\\.．)）\\s:：]/.test(t)      // 排除选项
+                            && !/^\\d+[、\\.．]/.test(t)                 // 排除题号
+                            && !/[？?]\\s*$/.test(t);                    // 排除题干
+                    }
+                    return false;
+                }));
+                if (shorts.length > 0) {
+                    // 弹窗底部 30% 区域内，取 bottom 最大、right 最大者
+                    const bottomLimit = mRect.top + mRect.height * 0.7;
+                    const bottom = shorts.filter(el => el.getBoundingClientRect().top >= bottomLimit);
+                    const pool = bottom.length > 0 ? bottom : shorts;
+                    pool.sort((a, b) => {
+                        const ra = a.getBoundingClientRect(), rb = b.getBoundingClientRect();
+                        return (rb.bottom - ra.bottom) || (rb.right - ra.right);
+                    });
+                    target = pool[0];
+                    via = 'bottom-element';
+                }
+            }
+            if (!target) {
+                return { ok: false, reason: 'not-found', modalTextTail: modalText.slice(-240) };
             }
             // 点击目标及其父级（最多 3 层），确保命中事件绑定节点
             simulateClick(target);
             let p = target.parentElement, n = 0;
             while (p && p !== root && n < 3) { simulateClick(p); p = p.parentElement; n++; }
-            return { ok: true, tag: target.tagName, cls: String(target.className).slice(0, 60), text: ((target.innerText || '').trim()).slice(0, 30) };
+            return { ok: true, via: via, tag: target.tagName, cls: String(target.className).slice(0, 60), text: ((target.innerText || '').trim()).slice(0, 30), modalTextTail: modalText.slice(-240) };
         })()
     `;
 
@@ -1006,7 +1038,7 @@ async function answerQuiz(webContents, step, runId) {
             await taskControl.wait(1000, runId);
             continue;
         }
-        logger.info(`[Execute Task] 答题: 第 ${opened.index} 题已点击提交（${submitResult.tag}.${submitResult.cls}，文本: ${submitResult.text}）`);
+        logger.info(`[Execute Task] 答题: 第 ${opened.index} 题已点击提交（${submitResult.via}，${submitResult.tag}.${submitResult.cls}，文本: ${submitResult.text}）`);
 
         // 等待答题弹窗关闭（关闭失败不致命，仅记录）
         const closed = await quizPollTrue(webContents, runId, modalClosedScript, 8000);
@@ -1027,7 +1059,7 @@ async function answerQuiz(webContents, step, runId) {
         if (!verified) {
             retries++;
             if (retries > 2) {
-                logger.warn(`[Execute Task] 答题: 第 ${opened.index} 题提交未生效（题目仍未标记已答），已重试 ${retries - 1} 次仍失败，停止答题`);
+                logger.warn(`[Execute Task] 答题: 第 ${opened.index} 题提交未生效（题目仍未标记已答），已重试 ${retries - 1} 次仍失败，停止答题。最近一次点击: ${submitResult.via} ${submitResult.tag}.${submitResult.cls} 文本: ${submitResult.text}，弹窗文本尾部: ${submitResult.modalTextTail || '无'}`);
                 break;
             }
             logger.warn(`[Execute Task] 答题: 第 ${opened.index} 题提交未生效（题目仍未标记已答），重试本题`);
